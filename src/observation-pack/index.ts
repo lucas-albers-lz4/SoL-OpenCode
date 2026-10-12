@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { access, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import type { Context, ToolContext } from "../deps/opencode-plugin-types.js";
 import { isArchivableCompletedToolResult, OBS_RECALL_TOOL } from "./archive-gate.js";
 import {
@@ -28,6 +28,7 @@ import {
   saveSessionIndex,
   type PackedToolResult,
 } from "./session-index.js";
+import { withSessionIndexLock } from "./session-index-mutex.js";
 
 const RECALL_MAX_BYTES = 16 * 1024;
 const RECALL_MAX_LINES = 400;
@@ -71,22 +72,24 @@ export async function registerObservationPack(
 
         await ensureStored(observation);
 
-        const entries = await loadSessionIndex(ctx.storage, event.sessionID);
-        const joinKey = `${event.sessionID}\0${event.id}`;
-        if (entries.some((entry) => `${event.sessionID}\0${entry.toolCallId}` === joinKey)) {
-          return;
-        }
+        await withSessionIndexLock(event.sessionID, async () => {
+          const entries = await loadSessionIndex(ctx.storage, event.sessionID);
+          const joinKey = `${event.sessionID}\0${event.id}`;
+          if (entries.some((entry) => `${event.sessionID}\0${entry.toolCallId}` === joinKey)) {
+            return;
+          }
 
-        const packed: PackedToolResult = {
-          toolCallId: event.id,
-          obsId: observation.id,
-          toolName: event.tool,
-          contentHash: observation.contentHash,
-          bytes: observation.bytes,
-          httpSendCount: 0,
-        };
+          const packed: PackedToolResult = {
+            toolCallId: event.id,
+            obsId: observation.id,
+            toolName: event.tool,
+            contentHash: observation.contentHash,
+            bytes: observation.bytes,
+            httpSendCount: 0,
+          };
 
-        await saveSessionIndex(ctx.storage, event.sessionID, [...entries, packed]);
+          await saveSessionIndex(ctx.storage, event.sessionID, [...entries, packed]);
+        });
       } catch (error) {
         failOpen("archive fail-open", error);
       }
@@ -96,66 +99,69 @@ export async function registerObservationPack(
   disposers.push(
     await ctx.session.hook("http.request", async (event) => {
       try {
-        const entries = await loadSessionIndex(ctx.storage, event.sessionID);
-        if (entries.length === 0) return;
+        await withSessionIndexLock(event.sessionID, async () => {
+          const entries = await loadSessionIndex(ctx.storage, event.sessionID);
+          if (entries.length === 0) return;
 
-        const root = await objectsRoot();
-        const liveEntries: PackedToolResult[] = [];
-        const projectionEntries: Array<{
-          text: string;
-          placeholder: string;
-          httpSendCount: number;
-        }> = [];
-        for (const entry of entries) {
-          const objectPath = observationObjectPath(root, entry.obsId);
-          try {
-            await access(objectPath);
-            const text = await readFile(objectPath, "utf8");
-            liveEntries.push(entry);
-            projectionEntries.push({
-              text,
-              placeholder: placeholderFor({
-                id: entry.obsId,
-                contentHash: entry.contentHash,
-                filePath: objectPath,
-                toolName: entry.toolName,
-                toolCallId: entry.toolCallId,
+          const root = await objectsRoot();
+          const liveEntries: PackedToolResult[] = [];
+          const projectionEntries: Array<{
+            text: string;
+            placeholder: string;
+            httpSendCount: number;
+            toolCallId: string;
+          }> = [];
+          for (const entry of entries) {
+            const objectPath = observationObjectPath(root, entry.obsId);
+            try {
+              const text = await readFile(objectPath, "utf8");
+              liveEntries.push(entry);
+              projectionEntries.push({
                 text,
-                bytes: entry.bytes,
-                lines: countLines(text),
-                tokens: estimateTokens(text),
-              }),
-              httpSendCount: entry.httpSendCount,
-            });
-          } catch {
-            // Fork without copied artifacts: fail open for this entry.
+                placeholder: placeholderFor({
+                  id: entry.obsId,
+                  contentHash: entry.contentHash,
+                  filePath: objectPath,
+                  toolName: entry.toolName,
+                  toolCallId: entry.toolCallId,
+                  text,
+                  bytes: entry.bytes,
+                  lines: countLines(text),
+                  tokens: estimateTokens(text),
+                }),
+                httpSendCount: entry.httpSendCount,
+                toolCallId: entry.toolCallId,
+              });
+            } catch {
+              // Fork without copied artifacts: fail open for this entry.
+            }
           }
-        }
-        if (liveEntries.length === 0) return;
+          if (liveEntries.length === 0) return;
 
-        const originalBody = await event.request.clone().text();
-        const { body: projectedBody, httpSendCounts } = projectArchivedTextsInHttpBody(
-          originalBody,
-          projectionEntries,
-        );
-        if (projectedBody !== originalBody) {
-          event.request = new Request(event.request, { body: projectedBody });
-        }
-
-        const updated = applyHttpProjectionToPackedEntries(liveEntries, httpSendCounts);
-        const merged = entries.map((entry) => {
-          const match = updated.find(
-            (candidate) => candidate.toolCallId === entry.toolCallId && candidate.obsId === entry.obsId,
+          const originalBody = await event.request.clone().text();
+          const { body: projectedBody, httpSendCounts } = projectArchivedTextsInHttpBody(
+            originalBody,
+            projectionEntries,
           );
-          return match ?? entry;
+          if (projectedBody !== originalBody) {
+            event.request = new Request(event.request, { body: projectedBody });
+          }
+
+          const updated = applyHttpProjectionToPackedEntries(liveEntries, httpSendCounts);
+          const merged = entries.map((entry) => {
+            const match = updated.find(
+              (candidate) => candidate.toolCallId === entry.toolCallId && candidate.obsId === entry.obsId,
+            );
+            return match ?? entry;
+          });
+          const countsChanged = merged.some((entry, index) => {
+            const prior = entries[index];
+            return prior !== undefined && prior.httpSendCount !== entry.httpSendCount;
+          });
+          if (projectedBody !== originalBody || countsChanged) {
+            await saveSessionIndex(ctx.storage, event.sessionID, merged);
+          }
         });
-        const countsChanged = merged.some((entry, index) => {
-          const prior = entries[index];
-          return prior !== undefined && prior.httpSendCount !== entry.httpSendCount;
-        });
-        if (projectedBody !== originalBody || countsChanged) {
-          await saveSessionIndex(ctx.storage, event.sessionID, merged);
-        }
       } catch (error) {
         failOpen("http.request projection fail-open", error);
       }
@@ -177,7 +183,7 @@ export async function registerObservationPack(
           required: ["id"],
           additionalProperties: false,
         },
-        async execute(input: unknown, _context: ToolContext) {
+        async execute(input: unknown, context: ToolContext) {
           const params =
             typeof input === "object" && input !== null
               ? (input as { id?: unknown; offset?: unknown })
@@ -186,6 +192,12 @@ export async function registerObservationPack(
             throw new Error(`Unknown observation id: ${String(params.id)}`);
           }
           const offset = typeof params.offset === "number" ? params.offset : 0;
+
+          const sessionEntries = await loadSessionIndex(ctx.storage, context.sessionID);
+          if (!sessionEntries.some((entry) => entry.obsId === params.id)) {
+            throw new Error(`Unknown observation id: ${params.id}`);
+          }
+
           const root = await objectsRoot();
           const path = observationObjectPath(root, params.id);
 
