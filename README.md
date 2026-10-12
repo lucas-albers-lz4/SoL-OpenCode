@@ -36,8 +36,8 @@ Register per [V2 plugin docs](https://dev.opencode.ai/v2/docs/build/plugins).
 
 ## npm
 
-`sol-opencode` is **not on the registry yet** (no `0.0.0` placeholder, no `0.1.0`).
-Install from a clone until the first CI publish of `v0.1.0` succeeds. After that:
+`sol-opencode` is published: **0.1.0** on npmjs (first CI publish via
+GitHub Actions trusted publishing, 2026-10-12 — OIDC, no tokens). Install:
 
 ```bash
 npm i sol-opencode
@@ -111,6 +111,10 @@ Flow:
    automatically.
 
 ### One-time npmjs bootstrap (human laptop, not CI)
+
+**Status: completed 2026-10-12** — placeholder + publisher attached, `v0.1.0`
+published via CI, publisher validated. Keep this section as the runbook only
+if the package is ever deleted/recreated or a new package is added to the repo.
 
 Trusted publishing can only be attached to a package that **already exists**,
 and `npm trust` needs an interactive npm login with account 2FA (a granular
