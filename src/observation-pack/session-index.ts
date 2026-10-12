@@ -4,6 +4,7 @@
  */
 
 import type { StorageDomain } from "../deps/opencode-plugin-types.js";
+import { isObservationId } from "./observation.js";
 
 /** Ledger pointers only; observation bytes live in the object file. */
 export interface PackedToolResult {
@@ -27,6 +28,7 @@ function isPackedEntry(value: unknown): value is PackedToolResult {
   return (
     typeof record.toolCallId === "string" &&
     typeof record.obsId === "string" &&
+    isObservationId(record.obsId) &&
     typeof record.toolName === "string" &&
     typeof record.contentHash === "string" &&
     typeof record.bytes === "number" &&

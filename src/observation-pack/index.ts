@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { readFile } from "node:fs/promises";
 import type { Context, ToolContext } from "../deps/opencode-plugin-types.js";
 import { isArchivableCompletedToolResult, OBS_RECALL_TOOL } from "./archive-gate.js";
 import {
@@ -19,6 +18,7 @@ import {
   isObservationId,
   placeholderFor,
   readRecallChunk,
+  readStoredObservation,
   textFromToolResult,
   utf8ByteLength,
 } from "./observation.js";
@@ -114,7 +114,7 @@ export async function registerObservationPack(
           for (const entry of entries) {
             const objectPath = observationObjectPath(root, entry.obsId);
             try {
-              const text = await readFile(objectPath, "utf8");
+              const text = await readStoredObservation(objectPath);
               liveEntries.push(entry);
               projectionEntries.push({
                 text,

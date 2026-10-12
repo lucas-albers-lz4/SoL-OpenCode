@@ -147,6 +147,17 @@ export async function ensureStored(observation: Observation): Promise<void> {
   }
 }
 
+export async function readStoredObservation(path: string): Promise<string> {
+  const handle = await open(path, READ_OBJECT_FLAGS);
+  try {
+    const stats = await handle.stat();
+    if (!stats.isFile()) throw new Error("Stored observation is not a regular file");
+    return await handle.readFile("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
 function completeLineExcerpt(text: string, budgetBytes: number, fromEnd: boolean): string {
   const lines = text.split(/(?<=\n)/);
   const selected: string[] = [];

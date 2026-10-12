@@ -226,7 +226,7 @@ async function main() {
     const askedOnce = await waitAsked(sessionOnce);
     console.log("permission.once", JSON.stringify(askedOnce, null, 2));
     if (!askedOnce.length) {
-      writeFileSync(join(out, `${mode}-result.json`), JSON.stringify({ go: false, reason: "no-ask-once" }, null, 2));
+      console.log("permission-result", JSON.stringify({ go: false, reason: "no-ask-once" }, null, 2));
       stop(2);
       return;
     }
@@ -241,14 +241,13 @@ async function main() {
       await new Promise((r) => setTimeout(r, 1500));
     }
 
-    writeFileSync(
-      join(out, `${mode}-result.json`),
+    console.log(
+      "permission-result",
       JSON.stringify(
         {
-          allowOnce: askedOnce[0],
-          reject: askedReject[0] ?? null,
+          allowOnceRequested: askedOnce.length > 0,
+          rejectRequested: askedReject.length > 0,
           nestedBeforeDeltaWant: 0,
-          pluginLog,
         },
         null,
         2,
@@ -263,13 +262,12 @@ async function main() {
     await new Promise((r) => setTimeout(r, 2500));
     const stored = await api("GET", `/api/session/${sessionID}/context`).catch(() => null);
     const storedText = JSON.stringify(stored ?? "");
-    writeFileSync(
-      join(out, `${mode}-result.json`),
+    console.log(
+      "context-result",
       JSON.stringify(
         {
           storedHasMarker: storedText.includes("SOL_OPENCODE_BLOB"),
           storedHasPlaceholder: storedText.includes("[sol.opencode:packed]"),
-          pluginLog,
         },
         null,
         2,
@@ -277,12 +275,11 @@ async function main() {
     );
   }
 
-  console.log("wrote", join(out, `${mode}-result.json`));
+  console.log(`${mode} live gate completed; summary is above`);
   stop(0);
 }
 
 main().catch((error) => {
   console.error(error);
-  writeFileSync(join(out, `${mode}-result.json`), JSON.stringify({ error: String(error) }, null, 2));
   stop(1);
 });

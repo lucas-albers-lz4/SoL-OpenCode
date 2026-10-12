@@ -62,9 +62,9 @@ The root `index.ts` is the local-directory entrypoint and simply re-exports `src
 `exports` (→ `dist/`) remains the publish entrypoint. Both channels land on the same implementation,
 so the local-path form works even before `npm run build`.
 
-The published tarball intentionally contains `dist/`, not the root `index.ts`. Reference an installed
-npm package by package name or `file:` specifier so OpenCode follows `exports`; do not point the
-local-directory loader at an absolute path inside `node_modules/sol-opencode`.
+The published tarball contains `dist/` plus the root `index.ts` and `src/` source. For an installed
+npm package, reference it by package name or `file:` specifier so OpenCode follows `exports`; an
+absolute path inside `node_modules/sol-opencode` selects the local-directory channel instead.
 
 ## Plugin id
 
