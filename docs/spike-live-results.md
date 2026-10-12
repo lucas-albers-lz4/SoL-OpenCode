@@ -1,8 +1,12 @@
 # Live gates on OpenCode 2.0.27
 
-Ran 2026-10-11 against `@opencode/cli@2.0.27` via `opencode serve` + mock OpenAI-compatible provider (`spikes/live/`). Not a TUI click-through; same `Permission.assert` / HTTP request hooks the TUI uses. Isolated XDG under `spikes/live/.xdg/`.
+Re-verified 2026-10-12 against `@opencode/cli@2.0.27` via `opencode serve` + mock OpenAI-compatible provider (`spikes/live/`). Not a TUI click-through; same `Permission.assert` / HTTP request hooks the TUI uses. Isolated XDG under `spikes/live/.xdg/`.
 
 Harness: `node spikes/live/run-live.mjs permission|context`
+
+**Harness loading note:** OpenCode 2.0.27 requires local plugins to be directories with an `index.ts` entrypoint; direct `.ts` file paths are silently skipped. The runner now uses the directory entrypoints under `spikes/live/plugins/`. The `no-ask-once` result from the earlier file-path setup was a harness-loading failure, not a host permission failure.
+
+**Root-entrypoint recheck:** With `dist/` absent, OpenCode 2.0.27 loaded the repository root as a local plugin directory; the mock provider's request included the `obs_recall` tool. This confirms the root `index.ts` re-export works in the host loader before `npm run build`.
 
 ## Action Fusion — **GO** (with implementer notes)
 
