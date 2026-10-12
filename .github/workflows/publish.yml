@@ -9,9 +9,9 @@ name: Publish
 #   Allowed actions:      npm publish
 #     (configs created after 2026-09-03 default to `npm stage publish` only)
 #
-# Create the GitHub environment `npm-publish` with required reviewers BEFORE
-# the first tag. A new trusted-publisher row expires in 2 days without a
-# successful publish.
+# GitHub environment `npm-publish` already exists (reviewer + 15m wait + v* tags).
+# npmjs trusted publisher is NOT attached until a 0.0.0 placeholder exists;
+# a new publisher row then expires in 2 days without a successful publish.
 #
 # Trigger: annotated version tag (v0.1.0, …). Tag without the leading v must
 # equal package.json "version". Provenance is automatic with OIDC.
