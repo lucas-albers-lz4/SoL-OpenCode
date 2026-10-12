@@ -88,3 +88,19 @@ Pinned runtime: see [docs/pin.md](./docs/pin.md).
 ## License
 
 MIT — see [LICENSE](./LICENSE).
+
+## Releasing (npm)
+
+Versions are published by CI via **npm trusted publishing (OIDC)** — no npm token
+exists for this package. Flow:
+
+1. Bump `package.json` version in a PR; merge to `main`.
+2. Tag the merged commit: `git tag -a vX.Y.Z -m "release vX.Y.Z" && git push origin vX.Y.Z`.
+3. `.github/workflows/publish.yml` validates (tests, typecheck, build, tag==version),
+   then runs `npm publish --access public` with the OIDC id-token; provenance is
+   attached automatically.
+
+The one-time bootstrap (npm requires the name to exist before a trusted publisher
+can be attached): the owner published a `0.0.0` placeholder, then registered the
+publisher on npmjs.com (GitHub Actions → `lucas-albers-lz4` / `SoL-OpenCode` /
+`publish.yml` / environment `npm-publish`, allowed action: **npm publish**).
