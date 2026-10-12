@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 SoL-OpenCode contributors
+ * SPDX-License-Identifier: MIT
+ */
+
 import { expect, it } from "vitest";
 import plugin from "../index.js";
 
