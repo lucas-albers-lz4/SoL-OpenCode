@@ -38,7 +38,7 @@ describe("private Observation Pack storage", () => {
     if (process.platform !== "win32") expect(stats.mode & 0o777).toBe(0o700);
   });
 
-  it("rejects an existing archive directory with group or world permissions", async () => {
+  it("tightens an owned archive directory that already has group or world permissions", async () => {
     if (process.platform === "win32") return;
 
     const dataHome = await tempRoot();
@@ -47,7 +47,22 @@ describe("private Observation Pack storage", () => {
     await mkdir(objectsRoot, { recursive: true, mode: 0o700 });
     await chmod(objectsRoot, 0o755);
 
-    await expect(observationPackObjectsRoot()).rejects.toThrow("unsafe permissions");
+    const root = await observationPackObjectsRoot();
+    const stats = await lstat(root);
+    expect(stats.mode & 0o777).toBe(0o700);
+  });
+
+  it("rejects a data directory beneath a non-sticky shared parent", async () => {
+    if (process.platform === "win32") return;
+
+    const root = await tempRoot();
+    const sharedParent = join(root, "shared");
+    const dataHome = join(sharedParent, "data");
+    await mkdir(dataHome, { recursive: true, mode: 0o700 });
+    await chmod(sharedParent, 0o777);
+    process.env.XDG_DATA_HOME = dataHome;
+
+    await expect(observationPackObjectsRoot()).rejects.toThrow("unsafe parent directory");
   });
 
   it("rejects malformed IDs before constructing an object path", () => {

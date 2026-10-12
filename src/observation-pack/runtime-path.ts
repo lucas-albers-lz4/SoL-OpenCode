@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { lstat, mkdir } from "node:fs/promises";
+import { chmod, lstat, mkdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { isObservationId } from "./observation.js";
 
 function defaultDataHome(): string {
@@ -48,7 +48,44 @@ async function ensurePrivateDirectory(path: string): Promise<void> {
   } catch (error) {
     if (!isCode(error, "EEXIST")) throw error;
   }
+
+  const stats = await lstat(path);
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    throw new Error("Observation storage path must be a real directory");
+  }
+  if (process.platform !== "win32") {
+    const uid = process.getuid?.();
+    if (uid !== undefined && stats.uid !== uid) {
+      throw new Error("Observation storage directory must be owned by the current user");
+    }
+    if ((stats.mode & 0o077) !== 0 || (stats.mode & 0o700) !== 0o700) {
+      if (uid === undefined || stats.uid !== uid) {
+        throw new Error("Observation storage directory has unsafe permissions");
+      }
+      await chmod(path, 0o700);
+    }
+  }
   await assertOwnedDirectory(path, true);
+}
+
+async function assertSafeDataHomeAncestors(path: string): Promise<void> {
+  if (process.platform === "win32") return;
+
+  let current = dirname(path);
+  while (true) {
+    const stats = await lstat(current);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) {
+      throw new Error("Observation storage parent must be a real directory");
+    }
+    const writableByOthers = (stats.mode & 0o022) !== 0;
+    const sticky = (stats.mode & 0o1000) !== 0;
+    if (writableByOthers && !sticky) {
+      throw new Error("Observation storage path has an unsafe parent directory");
+    }
+    const parent = dirname(current);
+    if (parent === current) return;
+    current = parent;
+  }
 }
 
 /** Plugin-owned archive root under a per-user data directory, never the shared temp directory. */
@@ -60,9 +97,11 @@ export async function observationPackObjectsRoot(): Promise<string> {
       : defaultDataHome();
 
   await mkdir(dataHome, { recursive: true, mode: 0o700 });
-  await assertOwnedDirectory(dataHome, false);
+  const canonicalDataHome = await realpath(dataHome);
+  await assertOwnedDirectory(canonicalDataHome, false);
+  await assertSafeDataHomeAncestors(canonicalDataHome);
 
-  const pluginRoot = join(dataHome, "sol-opencode");
+  const pluginRoot = join(canonicalDataHome, "sol-opencode");
   const packRoot = join(pluginRoot, "observation-pack");
   const objectsRoot = join(packRoot, "objects");
   await ensurePrivateDirectory(pluginRoot);
