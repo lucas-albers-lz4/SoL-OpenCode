@@ -1,0 +1,40 @@
+{
+  "name": "sol-opencode",
+  "version": "0.0.0",
+  "description": "Unofficial OpenCode V2 port of SoL-Pi Action Fusion and Observation Pack",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": "2.0.27"
+  },
+  "dependencies": {
+    "@opencode/util": "2.0.27",
+    "effect": "^4.0.1"
+  },
+  "devDependencies": {
+    "@opencode/cli": "^2.0.27",
+    "@opencode/plugin": "2.0.27",
+    "@types/node": "^24.12.2",
+    "typescript": "^5.8.2",
+    "vitest": "^3.2.4"
+  }
+}
