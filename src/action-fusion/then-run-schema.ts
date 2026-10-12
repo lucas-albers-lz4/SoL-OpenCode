@@ -1,9 +1,11 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 SoL-OpenCode contributors
  * SPDX-License-Identifier: MIT
  */
 
 import type { Tool } from "@opencode/schema/tool";
+import { Schema } from "effect";
 
 export interface ThenRunInput {
   readonly command: string;
@@ -22,8 +24,17 @@ function isJsonObjectSchema(input: Tool.ValueSchema): input is JsonObjectSchema 
   return (
     typeof input === "object" &&
     input !== null &&
+    !Schema.isSchema(input) &&
     "type" in input &&
     (input as JsonObjectSchema).type === "object"
+  );
+}
+
+function isEffectStruct(input: unknown): input is Schema.Struct<Schema.Struct.Fields> {
+  if (!Schema.isSchema(input)) return false;
+  return (
+    "fields" in input &&
+    typeof (input as { mapFields?: unknown }).mapFields === "function"
   );
 }
 
@@ -46,11 +57,37 @@ function thenRunProperty(description: string): Record<string, unknown> {
   };
 }
 
+function thenRunEffectField(description: string) {
+  const thenRun = Schema.Struct({
+    command: Schema.String.pipe(
+      Schema.annotateKey({
+        description: "Shell command to run after the mutation succeeds",
+      }),
+    ),
+    timeout: Schema.optionalKey(
+      Schema.Number.pipe(
+        Schema.annotateKey({
+          description: "Timeout in seconds (optional; converted to milliseconds for shell)",
+        }),
+      ),
+    ),
+  });
+  return Schema.optionalKey(thenRun).pipe(Schema.annotateKey({ description }));
+}
+
 /** Replace tool `input` with a clone that adds optional `then_run`; never mutates nested schema in place. */
 export function extendToolInputWithThenRun(
   input: Tool.ValueSchema,
   description: string,
 ): Tool.ValueSchema {
+  if (isEffectStruct(input)) {
+    if ("then_run" in input.fields) return input;
+    return input.mapFields((fields) => ({
+      ...fields,
+      then_run: thenRunEffectField(description),
+    }));
+  }
+
   if (!isJsonObjectSchema(input)) {
     return input;
   }

@@ -1,5 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 SoL-OpenCode contributors
  * SPDX-License-Identifier: MIT
  */
 
@@ -64,12 +65,14 @@ export async function withFusedFileQueues<T>(
   paths: readonly string[],
   work: () => Promise<T>,
 ): Promise<T> {
-  const ordered = [...paths].sort();
-  if (ordered.length === 0) return work();
+  const uniqueKeys = [
+    ...new Set(await Promise.all(paths.map((path) => canonicalQueueKey(path)))),
+  ].sort();
+  if (uniqueKeys.length === 0) return work();
 
   const runChain = async (index: number): Promise<T> => {
-    if (index >= ordered.length) return work();
-    return withFusedFileQueue(ordered[index]!, () => runChain(index + 1));
+    if (index >= uniqueKeys.length) return work();
+    return withFusedFileQueue(uniqueKeys[index]!, () => runChain(index + 1));
   };
 
   return runChain(0);
