@@ -10,60 +10,66 @@ export interface HttpProjectionEntry {
   readonly text: string;
   readonly placeholder: string;
   readonly httpSendCount: number;
-  readonly toolCallId?: string;
+  readonly toolCallId: string;
 }
 
-/**
- * Rewrite an outgoing provider HTTP body without touching stored session messages.
- * Increments send counts only when the archived text is present in the body.
- */
-/** JSON-string contents of `value` (no surrounding quotes), for matching inside HTTP JSON bodies. */
-export function jsonStringContents(value: string): string {
-  return JSON.stringify(value).slice(1, -1);
+function outputId(record: Record<string, unknown>): string | undefined {
+  switch (record.type) {
+    case "tool_result": {
+      const id = record.tool_use_id ?? record.toolUseId;
+      return typeof id === "string" ? id : undefined;
+    }
+    case "function_call_output": {
+      const id = record.call_id ?? record.callId;
+      return typeof id === "string" ? id : undefined;
+    }
+    default: {
+      if (record.role !== "tool") return undefined;
+      const id = record.tool_call_id ?? record.toolCallId;
+      return typeof id === "string" ? id : undefined;
+    }
+  }
 }
 
-function archivedTextPresentInBody(body: string, text: string): boolean {
-  if (body.includes(text)) return true;
-  const jsonText = jsonStringContents(text);
-  return jsonText.length > 0 && body.includes(jsonText);
+function outputField(record: Record<string, unknown>): "content" | "output" {
+  return record.type === "function_call_output" ? "output" : "content";
 }
 
-function messageToolCallId(record: Record<string, unknown>): string | undefined {
-  const id = record.tool_call_id ?? record.toolCallId;
-  return typeof id === "string" ? id : undefined;
-}
-
-function replaceTextInMessageRecord(
+function replaceOutputText(
   record: Record<string, unknown>,
+  field: "content" | "output",
   text: string,
   placeholder: string,
 ): boolean {
+  const value = record[field];
+  if (typeof value === "string") {
+    if (value !== text) return false;
+    record[field] = placeholder;
+    return true;
+  }
+  if (!Array.isArray(value)) return false;
+
+  const textBlocks = value.filter(
+    (block): block is Record<string, unknown> =>
+      typeof block === "object" &&
+      block !== null &&
+      typeof (block as Record<string, unknown>).text === "string",
+  );
+  if (
+    textBlocks.length === value.length &&
+    textBlocks.map((block) => block.text as string).join("\n") === text
+  ) {
+    record[field] = [{ type: "text", text: placeholder }];
+    return true;
+  }
+
   let changed = false;
-
-  if (typeof record.content === "string" && record.content === text) {
-    record.content = placeholder;
+  for (const block of textBlocks) {
+    if (block.text !== text) continue;
+    block.text = placeholder;
     changed = true;
-  } else if (Array.isArray(record.content)) {
-    for (const block of record.content) {
-      if (typeof block !== "object" || block === null) continue;
-      const part = block as Record<string, unknown>;
-      if (part.type === "text" && part.text === text) {
-        part.text = placeholder;
-        changed = true;
-      }
-    }
   }
-
   return changed;
-}
-
-function shouldRewriteMessage(record: Record<string, unknown>, entry: HttpProjectionEntry): boolean {
-  if (entry.toolCallId !== undefined) {
-    return messageToolCallId(record) === entry.toolCallId;
-  }
-  const role = record.role;
-  if (role !== undefined && role !== "tool") return false;
-  return true;
 }
 
 function projectEntryInParsedJson(
@@ -74,28 +80,24 @@ function projectEntryInParsedJson(
     return { value: parsed, changed: false };
   }
 
-  const root = parsed as Record<string, unknown>;
-  const messages = root.messages;
-  if (!Array.isArray(messages)) {
-    return { value: parsed, changed: false };
-  }
-
-  const clone = structuredClone(parsed) as Record<string, unknown>;
-  const clonedMessages = clone.messages;
-  if (!Array.isArray(clonedMessages)) {
-    return { value: parsed, changed: false };
-  }
-
+  const clone = structuredClone(parsed);
   let changed = false;
-  for (const message of clonedMessages) {
-    if (typeof message !== "object" || message === null) continue;
-    const record = message as Record<string, unknown>;
-    if (!shouldRewriteMessage(record, entry)) continue;
-    if (replaceTextInMessageRecord(record, entry.text, entry.placeholder)) {
-      changed = true;
-    }
-  }
 
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (typeof value !== "object" || value === null) return;
+
+    const record = value as Record<string, unknown>;
+    if (outputId(record) === entry.toolCallId) {
+      changed = replaceOutputText(record, outputField(record), entry.text, entry.placeholder) || changed;
+    }
+    for (const child of Object.values(record)) visit(child);
+  };
+
+  visit(clone);
   return changed ? { value: clone, changed: true } : { value: parsed, changed: false };
 }
 
@@ -104,11 +106,10 @@ export function projectArchivedTextsInHttpBody(
   entries: readonly HttpProjectionEntry[],
 ): { readonly body: string; readonly httpSendCounts: readonly number[] } {
   let parsed: unknown;
-  let isJson = true;
   try {
     parsed = JSON.parse(body);
   } catch {
-    isJson = false;
+    return { body, httpSendCounts: entries.map((entry) => entry.httpSendCount) };
   }
 
   const httpSendCounts: number[] = [];
@@ -116,23 +117,16 @@ export function projectArchivedTextsInHttpBody(
   let nextParsed = parsed;
 
   for (const entry of entries) {
-    let sendCount = entry.httpSendCount;
-    const present = archivedTextPresentInBody(nextBody, entry.text);
-
-    if (!present) {
-      httpSendCounts.push(sendCount);
+    const projection = projectEntryInParsedJson(nextParsed, entry);
+    if (!projection.changed) {
+      httpSendCounts.push(entry.httpSendCount);
       continue;
     }
 
-    sendCount += 1;
+    const sendCount = entry.httpSendCount + 1;
     if (sendCount > FULL_SENDS) {
-      if (isJson) {
-        const projected = projectEntryInParsedJson(nextParsed, entry);
-        if (projected.changed) {
-          nextParsed = projected.value;
-          nextBody = JSON.stringify(nextParsed);
-        }
-      }
+      nextParsed = projection.value;
+      nextBody = JSON.stringify(nextParsed);
     }
     httpSendCounts.push(sendCount);
   }
