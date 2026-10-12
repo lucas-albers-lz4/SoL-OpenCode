@@ -34,7 +34,10 @@ Load the built package in an OpenCode 2.0.27 project:
 
 Register per [V2 plugin docs](https://dev.opencode.ai/v2/docs/build/plugins).
 
-## npm (published)
+## npm
+
+`sol-opencode` is published: **0.1.0** on npmjs (first CI publish via
+GitHub Actions trusted publishing, 2026-10-12 — OIDC, no tokens). Install:
 
 ```bash
 npm i sol-opencode
@@ -98,8 +101,8 @@ npm ≥ 11.5.1 (required for OIDC). The published package still declares
 
 Flow:
 
-1. In GitHub: environment **`npm-publish`** exists with required reviewers
-   (create this before the first tag; it is not a gate until reviewers are set).
+1. GitHub environment **`npm-publish`** is already configured (required reviewer,
+   15-minute wait, tags `v*` only, admins cannot bypass).
 2. Bump `package.json` version in a PR; merge to `main`.
 3. Tag the merged commit: `git tag -a vX.Y.Z -m "release vX.Y.Z" && git push origin vX.Y.Z`.
 4. `.github/workflows/publish.yml` checks that the tag equals `package.json`
@@ -107,21 +110,55 @@ Flow:
    `npm publish --access public` with the OIDC id-token. Provenance is attached
    automatically.
 
-One-time npmjs.com trusted publisher (package → Settings → Trusted publishing →
-GitHub Actions). Fields must match the workflow **exactly** (case-sensitive):
+### One-time npmjs bootstrap (human laptop, not CI)
 
-| Field | Value |
-|--------|--------|
-| Organization or user | `lucas-albers-lz4` |
-| Repository | `SoL-OpenCode` |
-| Workflow filename | `publish.yml` |
-| Environment | `npm-publish` |
-| Allowed actions | **Allow `npm publish`** |
+**Status: completed 2026-10-12** — placeholder + publisher attached, `v0.1.0`
+published via CI, publisher validated. Keep this section as the runbook only
+if the package is ever deleted/recreated or a new package is added to the repo.
 
-After 2026-09-03, new publishers default to `npm stage publish` only. This
-workflow uses `npm publish`, so that box must be checked. A new publisher row
-**expires in 2 days** if it never completes a successful publish.
+Trusted publishing can only be attached to a package that **already exists**,
+and `npm trust` needs an interactive npm login with account 2FA (a granular
+token that bypasses 2FA will not work). Do this **immediately before** the
+first `v0.1.0` tag — a new publisher row **expires in 2 days** without a
+successful publish.
 
-The package name had to exist before a trusted publisher could be attached; a
-`0.0.0` placeholder was published for that bootstrap. Do not tag `v0.0.0`
-again.
+1. `npm login` (web + 2FA).
+2. Publish a **throwaway `0.0.0` placeholder** from a temp directory so you do
+   not publish `0.1.0` from `main` without OIDC:
+
+   ```bash
+   mkdir -p /tmp/sol-opencode-bootstrap && cd /tmp/sol-opencode-bootstrap
+   npm init -y
+   npm pkg set name=sol-opencode version=0.0.0 license=MIT \
+     description="Placeholder — do not install; real releases start at 0.1.0" \
+     publishConfig.access=public
+   printf '%s\n' 'Placeholder. Install sol-opencode@0.1.0 or later.' > README.md
+   npm publish --access public
+   ```
+
+3. Attach the GitHub Actions trusted publisher (`npm` ≥ 11.15). Fields must
+   match the workflow **exactly** (case-sensitive):
+
+   ```bash
+   npm trust github sol-opencode \
+     --file publish.yml \
+     --repo lucas-albers-lz4/SoL-OpenCode \
+     --environment npm-publish \
+     --allow-publish
+   ```
+
+   Equivalent UI: package → Settings → Trusted publishing → GitHub Actions.
+
+   | Field | Value |
+   |--------|--------|
+   | Organization or user | `lucas-albers-lz4` |
+   | Repository | `SoL-OpenCode` |
+   | Workflow filename | `publish.yml` |
+   | Environment | `npm-publish` |
+   | Allowed actions | **Allow `npm publish`** |
+
+   After 2026-09-03, new publishers default to `npm stage publish` only. This
+   workflow uses `npm publish`, so `--allow-publish` / that checkbox is required.
+
+4. Do not tag `v0.0.0`. The first real release is `v0.1.0` from CI after
+   [issue #2](https://github.com/lucas-albers-lz4/SoL-OpenCode/issues/2) is GO.
