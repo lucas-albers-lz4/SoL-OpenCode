@@ -1,36 +1,48 @@
 name: Publish
 # Trusted publishing (npm OIDC) — no npm token exists anywhere.
-# Trigger: push a version tag (v0.1.0, v0.2.0, ...). The tag version must
-# match package.json "version". npm grants provenance automatically.
+#
+# npmjs.com → package Settings → Trusted publishing (fields must match exactly):
+#   Organization or user: lucas-albers-lz4
+#   Repository:           SoL-OpenCode
+#   Workflow filename:    publish.yml
+#   Environment:          npm-publish
+#   Allowed actions:      npm publish
+#     (configs created after 2026-09-03 default to `npm stage publish` only)
+#
+# Create the GitHub environment `npm-publish` with required reviewers BEFORE
+# the first tag. A new trusted-publisher row expires in 2 days without a
+# successful publish.
+#
+# Trigger: annotated version tag (v0.1.0, …). Tag without the leading v must
+# equal package.json "version". Provenance is automatic with OIDC.
 on:
   push:
     tags:
-      - "v*"
+      - "v[0-9]*"
 permissions:
   contents: read
   id-token: write   # OIDC identity for npm trusted publishing + provenance
 jobs:
   publish:
     runs-on: ubuntu-latest
-    environment: npm-publish   # auto-created on first run; add required reviewers there for a human gate
-    concurrency: publish   # one release at a time
+    environment: npm-publish
+    concurrency: publish
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-        # NOTE: deliberately NO registry-url/NPM_TOKEN: auth is the OIDC id-token
-        # (npm trusted publishing). Provenance attestations are automatic.
-      - name: Upgrade npm (trusted publishing needs CLI >= 11.5.1; runners ship 10.x)
-        run: npm i -g npm@11
-      - run: npm ci
-      - run: npm test
-      - run: npm run typecheck
-      - run: npm run build
+          node-version: "24"
+          package-manager-cache: false
+        # No registry-url: setup-node would write empty _authToken and skip OIDC.
+        # Node 24 ships npm >= 11.5.1 (required for trusted publishing).
       - name: Verify tag matches package version
         run: |
           PKG=$(node -p "require('./package.json').version")
           TAG="${GITHUB_REF_NAME#v}"
           [ "$PKG" = "$TAG" ] || { echo "tag v$TAG != package $PKG"; exit 1; }
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
       - run: npm publish --access public
         # no NPM_TOKEN / .npmrc auth: npm exchanges the OIDC token (trusted publishing)
