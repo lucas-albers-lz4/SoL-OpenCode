@@ -1,8 +1,10 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 SoL-OpenCode contributors
  * SPDX-License-Identifier: MIT
  */
 
+import { Schema } from "effect";
 import { describe, expect, it, vi } from "vitest";
 import type { Info as ToolInfo, ToolContext } from "../src/deps/opencode-plugin-types.js";
 import { applyActionFusionToEditor } from "../src/action-fusion/wrap-tools.js";
@@ -101,5 +103,39 @@ describe("applyActionFusionToEditor transform replay", () => {
     applyActionFusionToEditor(editor, { cwd: "/tmp/project", patchThenRunInSchema: true });
     expect(stored.input).toHaveProperty("properties.then_run");
     expect(nested).not.toHaveProperty("then_run");
+  });
+
+  it("adds then_run to Effect Schema.Struct host inputs", () => {
+    const execute = vi.fn(async () => ({ content: "ok" }));
+    const input = Schema.Struct({
+      path: Schema.String,
+      oldText: Schema.String,
+      newText: Schema.String,
+    });
+    let stored = { ...baseEditTool(execute), input };
+
+    const editor = {
+      get: (id: string) => {
+        if (id === "shell") {
+          return { id: "shell", name: "shell", execute: vi.fn(async () => ({ content: "ok" })) };
+        }
+        if (id === "edit") return { ...stored };
+        return undefined;
+      },
+      update: (id: string, update: (tool: ToolInfo) => void) => {
+        const draft: ToolInfo = { ...stored };
+        update(draft);
+        stored = { ...stored, ...draft };
+      },
+      list: () => [stored],
+      add: () => {},
+      remove: () => {},
+      namespace: () => {},
+    };
+
+    applyActionFusionToEditor(editor, { cwd: "/tmp/project", patchThenRunInSchema: true });
+    expect(Schema.isSchema(stored.input)).toBe(true);
+    expect((stored.input as Schema.Struct<Schema.Struct.Fields>).fields).toHaveProperty("then_run");
+    expect(input.fields).not.toHaveProperty("then_run");
   });
 });
