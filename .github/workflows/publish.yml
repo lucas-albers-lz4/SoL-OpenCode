@@ -28,12 +28,12 @@ jobs:
     environment: npm-publish
     concurrency: publish
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "24"
-          package-manager-cache: false
         # No registry-url: setup-node would write empty _authToken and skip OIDC.
+        # No cache input: cache=false is the default; v5 has no package-manager-cache.
         # Node 24 ships npm >= 11.5.1 (required for trusted publishing).
       - name: Verify tag matches package version
         run: |
