@@ -9,6 +9,7 @@ import { projectArchivedTextsInHttpBody } from "../src/observation-pack/http-rew
 import {
   createObservation,
   FULL_SENDS,
+  placeholderFor,
   THRESHOLD_BYTES,
   utf8ByteLength,
 } from "../src/observation-pack/observation.js";
@@ -98,5 +99,68 @@ describe("projectArchivedTextsInHttpBody", () => {
     }
 
     expect(JSON.parse(body).messages[0].content).toBe(placeholder);
+  });
+
+  it("projects a single-line blob using the real multiline placeholder without breaking JSON", () => {
+    const blob = "A".repeat(10241);
+    const toolCallId = "call-single-line";
+    const observation = createObservation(blob, "bash", toolCallId, "/tmp/objects")!;
+    const placeholder = placeholderFor(observation);
+    expect(placeholder).toContain("\n");
+    expect(placeholder).toContain('"');
+
+    let body = JSON.stringify({
+      messages: [{ role: "tool", tool_call_id: toolCallId, content: blob }],
+    });
+    let sendCount = 0;
+
+    for (let request = 1; request <= FULL_SENDS + 1; request += 1) {
+      const projected = projectArchivedTextsInHttpBody(body, [
+        { text: blob, placeholder, httpSendCount: sendCount, toolCallId },
+      ]);
+      sendCount = projected.httpSendCounts[0] ?? sendCount;
+      body = projected.body;
+    }
+
+    const parsed = JSON.parse(body) as { messages: Array<{ content: string }> };
+    expect(parsed.messages[0]?.content).toBe(placeholder);
+    expect(body).not.toContain(blob);
+  });
+
+  it("rewrites only the tool message when user and tool share the same archived text", () => {
+    const blob = "A".repeat(10241);
+    const toolCallId = "call-shared-text";
+    const observation = createObservation(blob, "bash", toolCallId, "/tmp/objects")!;
+    const placeholder = placeholderFor(observation);
+
+    let body = JSON.stringify({
+      messages: [
+        { role: "user", content: blob },
+        { role: "tool", tool_call_id: toolCallId, content: blob },
+      ],
+    });
+
+    const projected = projectArchivedTextsInHttpBody(body, [
+      { text: blob, placeholder, httpSendCount: FULL_SENDS, toolCallId },
+    ]);
+
+    const parsed = JSON.parse(projected.body) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(parsed.messages[0]?.content).toBe(blob);
+    expect(parsed.messages[1]?.content).toBe(placeholder);
+  });
+
+  it("leaves non-JSON bodies unchanged while still counting sends", () => {
+    const blob = MARKER + "D".repeat(10241);
+    const placeholder = PLACEHOLDER;
+    const original = `not-json prefix ${blob} suffix`;
+
+    const projected = projectArchivedTextsInHttpBody(original, [
+      { text: blob, placeholder, httpSendCount: FULL_SENDS },
+    ]);
+
+    expect(projected.body).toBe(original);
+    expect(projected.httpSendCounts[0]).toBe(FULL_SENDS + 1);
   });
 });
