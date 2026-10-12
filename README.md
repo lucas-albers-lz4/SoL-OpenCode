@@ -92,15 +92,36 @@ MIT — see [LICENSE](./LICENSE).
 ## Releasing (npm)
 
 Versions are published by CI via **npm trusted publishing (OIDC)** — no npm token
-exists for this package. Flow:
+exists for this package. The publish job runs on **Node 24** so the runner has
+npm ≥ 11.5.1 (required for OIDC). The published package still declares
+`engines.node: ">=22"`.
 
-1. Bump `package.json` version in a PR; merge to `main`.
-2. Tag the merged commit: `git tag -a vX.Y.Z -m "release vX.Y.Z" && git push origin vX.Y.Z`.
-3. `.github/workflows/publish.yml` validates (tests, typecheck, build, tag==version),
-   then runs `npm publish --access public` with the OIDC id-token; provenance is
-   attached automatically.
+Flow:
 
-The one-time bootstrap (npm requires the name to exist before a trusted publisher
-can be attached): the owner published a `0.0.0` placeholder, then registered the
-publisher on npmjs.com (GitHub Actions → `lucas-albers-lz4` / `SoL-OpenCode` /
-`publish.yml` / environment `npm-publish`, allowed action: **npm publish**).
+1. In GitHub: environment **`npm-publish`** exists with required reviewers
+   (create this before the first tag; it is not a gate until reviewers are set).
+2. Bump `package.json` version in a PR; merge to `main`.
+3. Tag the merged commit: `git tag -a vX.Y.Z -m "release vX.Y.Z" && git push origin vX.Y.Z`.
+4. `.github/workflows/publish.yml` checks that the tag equals `package.json`
+   version, then validates (tests, typecheck, build) and runs
+   `npm publish --access public` with the OIDC id-token. Provenance is attached
+   automatically.
+
+One-time npmjs.com trusted publisher (package → Settings → Trusted publishing →
+GitHub Actions). Fields must match the workflow **exactly** (case-sensitive):
+
+| Field | Value |
+|--------|--------|
+| Organization or user | `lucas-albers-lz4` |
+| Repository | `SoL-OpenCode` |
+| Workflow filename | `publish.yml` |
+| Environment | `npm-publish` |
+| Allowed actions | **Allow `npm publish`** |
+
+After 2026-09-03, new publishers default to `npm stage publish` only. This
+workflow uses `npm publish`, so that box must be checked. A new publisher row
+**expires in 2 days** if it never completes a successful publish.
+
+The package name had to exist before a trusted publisher could be attached; a
+`0.0.0` placeholder was published for that bootstrap. Do not tag `v0.0.0`
+again.
