@@ -35,6 +35,6 @@
     "@opencode/plugin": "2.0.27",
     "@types/node": "^24.12.2",
     "typescript": "^5.8.2",
-    "vitest": "^3.2.4"
+    "vitest": "^5.0.4"
   }
 }
