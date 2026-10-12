@@ -32,7 +32,24 @@ Load the built package in an OpenCode 2.0.27 project:
 }
 ```
 
-Register per [V2 plugin docs](https://dev.opencode.ai/v2/docs/build/plugins). This is not yet published to npm.
+Register per [V2 plugin docs](https://dev.opencode.ai/v2/docs/build/plugins).
+
+## npm (published)
+
+```bash
+npm i sol-opencode
+```
+
+```jsonc
+{
+  "plugins": [
+    { "package": "sol-opencode@0.1.0", "options": { "actionFusion": true, "observationPack": true } }
+  ]
+}
+```
+
+The npm channel resolves through the package.json `exports` map (`dist/index.js`),
+independent of the local-directory channel above. Pinned against OpenCode **2.0.27**.
 
 ### How OpenCode resolves this plugin (two entry channels)
 

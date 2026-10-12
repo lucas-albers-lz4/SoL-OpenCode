@@ -1,6 +1,6 @@
 {
   "name": "sol-opencode",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Unofficial OpenCode V2 port of SoL-Pi Action Fusion and Observation Pack",
   "type": "module",
   "license": "MIT",
@@ -15,6 +15,8 @@
   },
   "files": [
     "dist",
+    "src",
+    "index.ts",
     "README.md",
     "LICENSE"
   ],
@@ -36,5 +38,17 @@
     "@types/node": "^24.12.2",
     "typescript": "^5.8.2",
     "vitest": "^5.0.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lucas-albers-lz4/SoL-OpenCode.git"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "sol-pi"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }
