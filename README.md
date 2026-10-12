@@ -34,6 +34,17 @@ Load the built package in an OpenCode 2.0.27 project:
 
 Register per [V2 plugin docs](https://dev.opencode.ai/v2/docs/build/plugins). This is not yet published to npm.
 
+### How OpenCode resolves this plugin (two entry channels)
+
+| How you reference it | What OpenCode V2 loads |
+|---|---|
+| Local directory path (clone-to-try, `"package": "/abs/path"` or `"./plugins/x"`) | `<dir>/index.ts` → `<dir>/index.js` directly. **The `exports` map is NOT consulted** on this channel. |
+| Package name / `file:` specifier (the future npm form) | Normal Node resolution via the package.json `exports` map → `dist/index.js`. |
+
+The root `index.ts` is the local-directory entrypoint and simply re-exports `src/index.ts`;
+`exports` (→ `dist/`) remains the publish entrypoint. Both channels land on the same implementation,
+so the local-path form works even before `npm run build`.
+
 ## Plugin id
 
 `sol.opencode`
