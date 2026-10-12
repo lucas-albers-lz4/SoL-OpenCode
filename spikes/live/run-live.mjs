@@ -58,8 +58,8 @@ writeFileSync(
         },
       },
       plugins: [
-        join(repo, "spikes/permission-probe.ts"),
-        join(repo, "spikes/context-probe.ts"),
+        join(repo, "spikes/live/plugins/permission-probe"),
+        join(repo, "spikes/live/plugins/context-probe"),
       ],
     },
     null,
