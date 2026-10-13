@@ -191,7 +191,7 @@ export function placeholderFor(observation: Observation): string {
     `original_bytes: ${observation.bytes}`,
     `original_lines: ${observation.lines}`,
     `estimated_tokens: ${observation.tokens}`,
-    `retrieve: call obs_recall with {"id":"${observation.id}","offset":0}; continue with returned next_offset`,
+    `archived: full text is retrievable from the local observation store (id "${observation.id}")`,
     `tool_call_id for recall context: ${observation.toolCallId}`,
     `[first complete lines, up to ${headBudget} bytes]`,
     head,

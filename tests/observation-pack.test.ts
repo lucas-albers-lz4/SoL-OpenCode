@@ -133,6 +133,19 @@ describe("projectArchivedTextsInHttpBody", () => {
     expect(body).not.toContain(blob);
   });
 
+  it("uses neutral availability wording in the placeholder (issue #26; measured in #27)", () => {
+    const blob = "A".repeat(10241);
+    const observation = createObservation(blob, "bash", "call-wording", "/tmp/objects")!;
+    const placeholder = placeholderFor(observation);
+    // Neutral, non-imperative availability line — an instruction to call
+    // obs_recall measurably inflates agent round-trips (B1: +128%; nemotron
+    // 3-arm docs: +22% rt / worse totals than the neutral arm).
+    expect(placeholder).toContain('archived: full text is retrievable from the local observation store (id "');
+    expect(placeholder).not.toMatch(/call obs_recall/i);
+    // The quote guardrail (single-line JSON safety) depends on quoted values here.
+    expect(placeholder).toContain('id "');
+  });
+
   it("rewrites only the tool message when user and tool share the same archived text", () => {
     const blob = "A".repeat(10241);
     const toolCallId = "call-shared-text";
