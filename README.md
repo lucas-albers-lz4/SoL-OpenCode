@@ -82,6 +82,42 @@ absolute path inside `node_modules/sol-opencode` selects the local-directory cha
 
 Invalid option values log a warning and disable that mechanism only; `setup` does not throw.
 
+## Measured behavior (2026-10-12/13 A/B campaigns)
+
+Numbers below come from arm-controlled runs (same model, same prompt bytes,
+same repo state; plugin off vs on) measured with [`benchmarks/`](./benchmarks/).
+Per-round-trip and peak context are the projection-controlled metrics; run
+*totals* also scale with agent-chosen step counts, which is itself arm-sensitive.
+
+**Observation Pack**
+- Review-sized sessions (4 reps/arm, neutral wording, same bundle/model):
+  **avg context per provider round-trip −22%**, **peak session context −30%**
+  vs control (imperative wording achieved −14%/−20% but at ~2× the
+  provider round-trips — see wording note below).
+- Audit-style sessions (7 off-vs-plugin pairs, same model + prompt bytes per
+  pair, three model families): **−31% to −80% total billed context** where
+  tool results cross the 10 KiB gate; on a pair where they never did, the
+  plugin arm packed **0 objects and delivered ≈0% delta** — the pack is
+  provably inert on small-result workloads (expected behavior, not a failure).
+- Placeholder wording matters: the availability-style placeholder (since
+  0.1.1) beat the imperative "call obs_recall" phrasing by 13–37% in billed
+  context and 23–44% in provider round-trips across the three families
+  tested; runs carrying the imperative never recalled (0 across all of
+  them), while neutral-wording runs recalled spontaneously when archived
+  bytes were actually needed.
+- Short sessions (~2 provider sends) never see a placeholder at all (recent
+  results stay verbatim by design); projection savings require session length.
+
+**Action Fusion**
+- `then_run` is exposed on `edit`/`write` with optional `shell`, works when
+  used (allow/reject/fail/blank paths verified), and **no free-tier model
+  adopted it in 4/4 bounded fixer sessions** where the prompt merely permitted
+  it — agents serialized edit → shell regardless. Fusion is currently
+  opt-in-by-capability, not a measured win; treat it as scaffolding.
+
+See [`benchmarks/README.md`](./benchmarks/README.md) for the protocol, the
+method rules that make these numbers citable, and how to regenerate them.
+
 ## Provenance
 
 Portable algorithms are copied from SoL-Pi (MIT, NVIDIA copyright). Reference commit: `e1a586af0ad8956f42ae5b26bba20e48fbf30e00`.
