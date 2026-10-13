@@ -1,6 +1,6 @@
 {
   "name": "sol-opencode",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Unofficial OpenCode V2 port of SoL-Pi Action Fusion and Observation Pack",
   "type": "module",
   "license": "MIT",
