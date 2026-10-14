@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Tool } from "@opencode/schema/tool";
@@ -181,5 +181,33 @@ describe("patch then_run fusion guard", () => {
 
     const withoutThenRun = await harness.execute({ patchText: "*** Begin Patch\n*** End Patch" });
     expect(textOf(withoutThenRun)).toBe("patched");
+  });
+
+  it("runs then_run for a rename patch, where a moving update removes its source", async () => {
+    const shellExecute = vi.fn(async () => ({
+      content: "after-rename",
+      metadata: { exit: 0 },
+    })) as ShellExecute;
+    const dir = await mkdtemp(join(tmpdir(), "then-run-rename-"));
+    const source = join(dir, "old.txt");
+    const destination = join(dir, "new.txt");
+    await writeFile(source, "old\n", "utf8");
+
+    const mutate = vi.fn(async () => {
+      await rename(source, destination);
+      return { content: "renamed" };
+    });
+    const harness = patchToolHarness({ cwd: dir, shellExecute, mutate });
+
+    const result = await harness.execute({
+      patchText:
+        "*** Begin Patch\n*** Update File: old.txt\n*** Move to: new.txt\n@@\n-old\n+new\n*** End Patch",
+      then_run: { command: "echo after-rename" },
+    });
+
+    expect(mutate).toHaveBeenCalled();
+    expect(shellExecute).toHaveBeenCalledWith({ command: "echo after-rename" }, mockContext);
+    expect(textOf(result)).toContain("[then_run:succeeded]");
+    expect(textOf(result)).not.toContain("[then_run:skipped]");
   });
 });

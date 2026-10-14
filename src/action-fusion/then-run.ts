@@ -48,7 +48,10 @@ async function fileState(path: string): Promise<string> {
   try {
     return await fileSha256(path);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    // Mirrors `isMissingPathError` in file-queue.ts: ENOENT and ENOTDIR both mean
+    // "no file here", neither is interference.
+    if (code === "ENOENT" || code === "ENOTDIR") {
       return MISSING_FILE_STATE;
     }
     throw error;
