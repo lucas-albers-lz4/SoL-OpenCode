@@ -4,7 +4,7 @@
  */
 
 import { Schema } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Tool } from "@opencode/schema/tool";
 import { extendToolInputWithThenRun } from "../src/action-fusion/then-run-schema.js";
 
@@ -93,6 +93,25 @@ describe("extendToolInputWithThenRun JSON Schema", () => {
 
       expect(extended).toHaveProperty("properties.then_run");
     }
+  });
+
+  it("logs why then_run is unavailable for an unsupported family (issue #41 item 7)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const union = Schema.Union([
+      Schema.Struct({ a: Schema.String }),
+      Schema.Struct({ b: Schema.String }),
+    ]);
+    const suspended = Schema.suspend(() => Schema.Struct({ c: Schema.String }));
+
+    for (const schema of [union, suspended]) {
+      expect(extendToolInputWithThenRun(schema, "fused")).toBe(schema);
+    }
+
+    const warnings = warn.mock.calls.flat().join(" ");
+    expect(warnings).toContain("then_run unavailable");
+    expect(warnings).toContain("effect-schema");
+    warn.mockRestore();
   });
 
   it("keys off an own then_run property, not an inherited one", () => {

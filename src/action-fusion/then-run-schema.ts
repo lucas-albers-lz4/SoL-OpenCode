@@ -45,6 +45,15 @@ function isJsonObjectSchema(input: Tool.ValueSchema): input is JsonObjectSchema 
   );
 }
 
+/** Short label for the schema family, so an "unavailable" warning names what it saw. */
+function describeSchemaFamily(input: Tool.ValueSchema): string {
+  if (Schema.isSchema(input)) return isEffectStruct(input) ? "effect-struct" : "effect-schema";
+  if (typeof input === "object" && input !== null && "type" in input) {
+    return `json:${String((input as { type?: unknown }).type)}`;
+  }
+  return typeof input;
+}
+
 function isEffectStruct(input: unknown): input is Schema.Struct<Schema.Struct.Fields> {
   if (!Schema.isSchema(input)) return false;
   return (
@@ -119,6 +128,11 @@ export function extendToolInputWithThenRun(
   }
 
   if (!isJsonObjectSchema(input)) {
+    // The tool still registers, it simply has no then_run. Say so rather than returning the
+    // same object silently, which made an unsupported schema family invisible (issue #41).
+    console.warn(
+      `sol.opencode: then_run unavailable for a tool input of an unsupported schema family (${describeSchemaFamily(input)}); registering the tool without it`,
+    );
     return input;
   }
 
