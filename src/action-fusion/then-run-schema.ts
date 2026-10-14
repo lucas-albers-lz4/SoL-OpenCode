@@ -75,7 +75,13 @@ function thenRunEffectField(description: string) {
   return Schema.optionalKey(thenRun).pipe(Schema.annotateKey({ description }));
 }
 
-/** Replace tool `input` with a clone that adds optional `then_run`; never mutates nested schema in place. */
+/**
+ * Replace tool `input` with a shallow copy that adds optional `then_run`; never
+ * mutates the caller's schema. Returns `input` unchanged when the schema already
+ * declares `then_run` (mirrors the Effect-struct branch) and uses a shallow copy
+ * rather than a deep clone, which throws on in-process schemas that carry
+ * functions.
+ */
 export function extendToolInputWithThenRun(
   input: Tool.ValueSchema,
   description: string,
@@ -92,11 +98,17 @@ export function extendToolInputWithThenRun(
     return input;
   }
 
-  const clone = structuredClone(input) as JsonObjectSchema;
-  const properties = { ...(clone.properties ?? {}), then_run: thenRunProperty(description) };
+  const declared = input.properties;
+  if (typeof declared === "object" && declared !== null && Object.hasOwn(declared, "then_run")) {
+    return input;
+  }
+
   return {
-    ...clone,
-    properties,
+    ...input,
+    properties: {
+      ...(input.properties ?? {}),
+      then_run: thenRunProperty(description),
+    },
   };
 }
 
