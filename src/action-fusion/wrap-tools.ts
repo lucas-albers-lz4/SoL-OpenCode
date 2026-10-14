@@ -9,6 +9,7 @@ import type { Types } from "effect";
 import { resolveMutationPath } from "./file-queue.js";
 import { enumeratePatchWrittenPaths } from "./patch-paths.js";
 import {
+  appendThenRunSkipNotice,
   executeMutationThenRunPatch,
   executeMutationThenRunSinglePath,
   type ShellExecute,
@@ -80,13 +81,25 @@ function wrapToolExecute(
           : "";
 
       const writtenPaths = enumeratePatchWrittenPaths(patchText);
-      const effectiveThenRun =
-        writtenPaths !== undefined && writtenPaths.length > 0 ? thenRun : undefined;
+
+      // A parsed patch that touches no path cannot queue or guard a follow-up, so
+      // report the skip instead of returning plain success.
+      if (writtenPaths !== undefined && writtenPaths.length === 0) {
+        const mutationResult = await currentExecute(mutationInput, context);
+        return thenRun === undefined
+          ? mutationResult
+          : appendThenRunSkipNotice(
+              mutationResult,
+              "the patch touches no file path; the command was not run.",
+            );
+      }
 
       return executeMutationThenRunPatch({
         cwd: config.cwd,
         relativePaths: writtenPaths ?? [],
-        thenRun: effectiveThenRun,
+        // An unparseable patch keeps the historical silent omission: its touched
+        // paths are unknowable, so the follow-up is neither queued nor run.
+        thenRun: writtenPaths === undefined ? undefined : thenRun,
         context,
         shellExecute: config.shellExecute,
         mutate: () => currentExecute(mutationInput, context),
