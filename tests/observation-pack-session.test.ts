@@ -125,36 +125,91 @@ describe("observation pack session index", () => {
   });
 });
 
+let dataHomePromise: Promise<string> | undefined;
+
+/**
+ * One archive root for the whole file: the pack resolves its objects root once and keeps it,
+ * so a second `XDG_DATA_HOME` would make the tool read from the first one.
+ */
+async function recallDataHome(): Promise<string> {
+  dataHomePromise ??= (async () => {
+    const dataHome = await mkdtemp(join(tmpdir(), "sol-op-recall-"));
+    process.env.XDG_DATA_HOME = dataHome;
+    return dataHome;
+  })();
+  return dataHomePromise;
+}
+
+async function withObservation(
+  text: string,
+  sessionID: string,
+  run: (execute: Info["execute"], observationId: string) => Promise<void>,
+): Promise<void> {
+  await recallDataHome();
+
+  const storage = memoryStorage();
+  const objectsRoot = await observationPackObjectsRoot();
+  const observation = createObservation(text, "bash", "call-a", objectsRoot)!;
+  await ensureStored(observation);
+  await saveSessionIndex(storage, sessionID, [packedEntry("call-a", observation.id)]);
+
+  await run(await captureObsRecallExecute(storage), observation.id);
+}
+
+describe("obs_recall header", () => {
+  afterEach(() => {
+    resetSessionIndexLocksForTests();
+  });
+
+  it("reports the effective start and a cursor that pages forward", async () => {
+    // "é" is two bytes, so offset 1 lands inside the first character.
+    await withObservation(`${"é".repeat(6000)}\n`, "session-a", async (execute, id) => {
+      const snapped = await execute({ id, offset: 1 }, fakeToolContext("session-a"));
+
+      expect(snapped.content).toContain("offset=2 (requested 1, snapped to a character boundary)");
+
+      const cursor = /next_offset=(\d+)/u.exec(snapped.content)?.[1];
+      expect(cursor).toBeDefined();
+      // The cursor must move past the character that was snapped. Reporting the requested
+      // offset instead would make a paging model re-read the same bytes.
+      expect(Number(cursor)).toBeGreaterThan(2);
+
+      // Paging from the header's own cursor must continue instead of re-serving the same chunk.
+      const continued = await execute({ id, offset: Number(cursor) }, fakeToolContext("session-a"));
+      expect(continued.content).toContain(`offset=${String(cursor)} `);
+      expect(continued.content).not.toContain("snapped");
+      expect(continued.content).not.toBe(snapped.content);
+    });
+  });
+
+  it("rejects a non-numeric offset instead of answering from the start", async () => {
+    await withObservation("C".repeat(10_241), "session-a", async (execute, id) => {
+      for (const offset of ["100", true, null, {}]) {
+        await expect(execute({ id, offset }, fakeToolContext("session-a"))).rejects.toThrow(
+          /must be an integer >= 0/u,
+        );
+      }
+
+      // An absent offset still means "from the start".
+      const result = await execute({ id }, fakeToolContext("session-a"));
+      expect(result.content).toContain("offset=0 ");
+    });
+  });
+});
+
 describe("obs_recall session isolation", () => {
   afterEach(() => {
     resetSessionIndexLocksForTests();
   });
 
   it("rejects observation ids that belong to another session", async () => {
-    const dataHome = await mkdtemp(join(tmpdir(), "sol-op-session-"));
-    const prior = process.env.XDG_DATA_HOME;
-    process.env.XDG_DATA_HOME = dataHome;
+    await withObservation("C".repeat(10_241), "session-a", async (execute, id) => {
+      await expect(execute({ id }, fakeToolContext("session-b"))).rejects.toThrow(
+        `Unknown observation id: ${id}`,
+      );
 
-    try {
-      const storage = memoryStorage();
-      const text = "C".repeat(10_241);
-      const objectsRoot = await observationPackObjectsRoot();
-      const observation = createObservation(text, "bash", "call-a", objectsRoot)!;
-      await ensureStored(observation);
-
-      await saveSessionIndex(storage, "session-a", [packedEntry("call-a", observation.id)]);
-
-      const execute = await captureObsRecallExecute(storage);
-
-      await expect(
-        execute({ id: observation.id }, fakeToolContext("session-b")),
-      ).rejects.toThrow(`Unknown observation id: ${observation.id}`);
-
-      const result = await execute({ id: observation.id }, fakeToolContext("session-a"));
-      expect(result.content).toContain(observation.id);
-    } finally {
-      if (prior === undefined) delete process.env.XDG_DATA_HOME;
-      else process.env.XDG_DATA_HOME = prior;
-    }
+      const result = await execute({ id }, fakeToolContext("session-a"));
+      expect(result.content).toContain(id);
+    });
   });
 });

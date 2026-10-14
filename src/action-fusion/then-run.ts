@@ -103,7 +103,8 @@ export async function executeThenRun(
   shellExecute: ShellExecute,
 ): Promise<string> {
   if (thenRun.command.trim() === "") {
-    throw new Error(`${THEN_RUN_FAILED} empty command`);
+    // `thenRunFailedError` prepends the marker for this path; do not duplicate it.
+    throw new Error("empty command");
   }
 
   const timeoutMs = thenRunTimeoutMs(thenRun);
@@ -146,6 +147,7 @@ export async function executeMutationThenRunSinglePath({
   cwd,
   absolutePath,
   thenRun,
+  skipReason,
   mutate,
   context,
   shellExecute,
@@ -153,6 +155,8 @@ export async function executeMutationThenRunSinglePath({
   readonly cwd: string;
   readonly absolutePath: string;
   readonly thenRun: ThenRunInput | undefined;
+  /** Set when `then_run` was present but unusable; carried so the reason survives a throw. */
+  readonly skipReason?: string;
   readonly mutate: () => Promise<Tool.Result>;
   readonly context: ToolContext;
   readonly shellExecute: ShellExecute | undefined;
@@ -162,12 +166,13 @@ export async function executeMutationThenRunSinglePath({
     try {
       mutationResult = await mutate();
     } catch (error) {
-      if (thenRun !== undefined) {
-        throw new Error(
-          `${errorText(error)}\n\n${THEN_RUN_SKIPPED} The file mutation did not complete successfully; the command was not run.`,
-        );
+      if (thenRun === undefined && skipReason === undefined) {
+        throw error;
       }
-      throw error;
+      // A malformed `then_run` normalises to `thenRun: undefined`, so its reason has to be
+      // carried separately or the caller's mistake disappears on this path.
+      const reason = skipReason ?? "The file mutation did not complete successfully";
+      throw new Error(`${errorText(error)}\n\n${THEN_RUN_SKIPPED} ${reason}; the command was not run.`);
     }
 
     if (thenRun === undefined) {
@@ -192,6 +197,7 @@ export async function executeMutationThenRunPatch({
   cwd,
   relativePaths,
   thenRun,
+  skipReason,
   mutate,
   context,
   shellExecute,
@@ -199,6 +205,8 @@ export async function executeMutationThenRunPatch({
   readonly cwd: string;
   readonly relativePaths: readonly string[];
   readonly thenRun: ThenRunInput | undefined;
+  /** Set when `then_run` was present but unusable; carried so the reason survives a throw. */
+  readonly skipReason?: string;
   readonly mutate: () => Promise<Tool.Result>;
   readonly context: ToolContext;
   readonly shellExecute: ShellExecute | undefined;
@@ -210,12 +218,11 @@ export async function executeMutationThenRunPatch({
     try {
       mutationResult = await mutate();
     } catch (error) {
-      if (thenRun !== undefined) {
-        throw new Error(
-          `${errorText(error)}\n\n${THEN_RUN_SKIPPED} The patch did not complete successfully; the command was not run.`,
-        );
+      if (thenRun === undefined && skipReason === undefined) {
+        throw error;
       }
-      throw error;
+      const reason = skipReason ?? "The patch did not complete successfully";
+      throw new Error(`${errorText(error)}\n\n${THEN_RUN_SKIPPED} ${reason}; the command was not run.`);
     }
 
     if (thenRun === undefined) {
