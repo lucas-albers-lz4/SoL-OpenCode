@@ -7,7 +7,10 @@ import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   extendToolInputWithThenRun,
+  MAX_TIMEOUT_SECONDS,
   stripThenRun,
+  THEN_RUN_INVALID_TIMEOUT,
+  THEN_RUN_TIMEOUT_TOO_LARGE,
   thenRunTimeoutMs,
 } from "../src/action-fusion/then-run-schema.js";
 
@@ -39,19 +42,37 @@ describe("stripThenRun validation", () => {
   });
 
   it("accepts a usable then_run and coerces a numeric-string timeout", () => {
-    expect(stripThenRun({ a: 1, then_run: { command: "echo hi" } })).toEqual({
+    // `toStrictEqual`: `toEqual` cannot tell an absent key from `undefined`, so a variant
+    // that emitted `timeout: undefined` would pass.
+    expect(stripThenRun({ a: 1, then_run: { command: "echo hi" } })).toStrictEqual({
       mutationInput: { a: 1 },
       thenRun: { command: "echo hi" },
       skipReason: undefined,
     });
-    expect(stripThenRun({ then_run: { command: "echo hi", timeout: "5" } }).thenRun).toEqual({
+    expect(stripThenRun({ then_run: { command: "echo hi", timeout: "5" } }).thenRun).toStrictEqual({
       command: "echo hi",
       timeout: 5,
     });
-    expect(stripThenRun({ then_run: { command: "echo hi", timeout: 5 } }).thenRun).toEqual({
+    expect(stripThenRun({ then_run: { command: "echo hi", timeout: 5 } }).thenRun).toStrictEqual({
       command: "echo hi",
       timeout: 5,
     });
+  });
+
+  it("blames the container, not the command, for a non-plain object", () => {
+    for (const value of [new Date(), new Map(), new (class { command = "echo hi"; })()]) {
+      const stripped = stripThenRun({ then_run: value });
+      expect(String(stripped.skipReason)).toContain("must be an object");
+      expect(String(stripped.skipReason)).not.toContain("non-empty string");
+    }
+  });
+
+  it("rejects a timeout above the largest timer Node accepts", () => {
+    const tooLarge = stripThenRun({ then_run: { command: "echo hi", timeout: 3_000_000 } });
+    expect(tooLarge.thenRun).toBeUndefined();
+    expect(tooLarge.skipReason).toBe(THEN_RUN_TIMEOUT_TOO_LARGE);
+    expect(stripThenRun({ then_run: { command: "echo hi", timeout: MAX_TIMEOUT_SECONDS } }).thenRun)
+      .toStrictEqual({ command: "echo hi", timeout: MAX_TIMEOUT_SECONDS });
   });
 
   it("leaves an absent then_run unmarked", () => {
@@ -112,9 +133,15 @@ describe("then_run schema guards", () => {
 
   it("keeps an unusable bound away from shell.execute", () => {
     expect(thenRunTimeoutMs({ command: "x", timeout: 12 })).toBe(12_000);
-    expect(thenRunTimeoutMs({ command: "x", timeout: Number.POSITIVE_INFINITY })).toBeUndefined();
-    expect(thenRunTimeoutMs({ command: "x", timeout: Number.NaN })).toBeUndefined();
-    expect(thenRunTimeoutMs({ command: "x", timeout: -5 })).toBeUndefined();
     expect(thenRunTimeoutMs({ command: "x" })).toBeUndefined();
+    // A bound that cannot be honoured must not become an unbounded run for a direct caller.
+    for (const unusable of [Number.POSITIVE_INFINITY, Number.NaN, -5, 0]) {
+      expect(() => thenRunTimeoutMs({ command: "x", timeout: unusable })).toThrow(
+        THEN_RUN_INVALID_TIMEOUT,
+      );
+    }
+    expect(() => thenRunTimeoutMs({ command: "x", timeout: MAX_TIMEOUT_SECONDS + 1 })).toThrow(
+      THEN_RUN_TIMEOUT_TOO_LARGE,
+    );
   });
 });

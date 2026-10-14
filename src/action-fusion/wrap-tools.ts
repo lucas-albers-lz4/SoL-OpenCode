@@ -98,6 +98,7 @@ function wrapToolExecute(
         // An unparseable patch keeps the historical silent omission: its touched
         // paths are unknowable, so the follow-up is neither queued nor run.
         thenRun: writtenPaths === undefined ? undefined : thenRun,
+        skipReason,
         context,
         shellExecute: config.shellExecute,
         mutate: () => currentExecute(mutationInput, context),
@@ -121,6 +122,7 @@ function wrapToolExecute(
       cwd: config.cwd,
       absolutePath: resolveMutationPath(config.cwd, pathValue),
       thenRun,
+      skipReason,
       context,
       shellExecute: config.shellExecute,
       mutate: () => currentExecute(mutationInput, context),

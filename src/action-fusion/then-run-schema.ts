@@ -18,6 +18,15 @@ export const THEN_RUN_INVALID_COMMAND = "then_run.command must be a non-empty st
 export const THEN_RUN_INVALID_TIMEOUT =
   "then_run.timeout must be a positive, finite number of seconds.";
 
+/**
+ * `setTimeout` clamps anything above 2**31-1 ms to 1 ms, so a bound far larger than a
+ * caller's intent would run the command instantly. Reject it instead of inverting it.
+ */
+export const MAX_TIMEOUT_MILLISECONDS = 2_147_483_647;
+export const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MILLISECONDS / 1000;
+export const THEN_RUN_TIMEOUT_TOO_LARGE =
+  `then_run.timeout must be at most ${MAX_TIMEOUT_SECONDS} seconds (the largest timer Node accepts).`;
+
 type JsonObjectSchema = {
   readonly type: "object";
   readonly properties?: Record<string, unknown>;
@@ -127,8 +136,14 @@ export function extendToolInputWithThenRun(
   };
 }
 
+/**
+ * Only a plain object is a `then_run`: a `Date`, `Map` or class instance is not a record
+ * carrying a `command`, and blaming its missing command would hide the real problem.
+ */
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  return prototype === Object.prototype || prototype === null;
 }
 
 /**
@@ -167,6 +182,9 @@ function parseThenRun(
   if (seconds === undefined) {
     return { skipReason: THEN_RUN_INVALID_TIMEOUT };
   }
+  if (seconds * 1000 > MAX_TIMEOUT_MILLISECONDS) {
+    return { skipReason: THEN_RUN_TIMEOUT_TOO_LARGE };
+  }
   return { thenRun: { command, timeout: seconds } };
 }
 
@@ -191,8 +209,15 @@ export function stripThenRun<T extends Record<string, unknown>>(input: T): {
 export function thenRunTimeoutMs(thenRun: ThenRunInput | undefined): number | undefined {
   const seconds = thenRun?.timeout;
   if (seconds === undefined) return undefined;
-  // Defensive second line of defence for direct callers: an unusable bound must not
-  // reach shell.execute as a timeout.
-  if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
-  return seconds * 1000;
+  // Second line of defence for direct callers — the fused path validated this already.
+  // A bound that cannot be honoured must not degrade into an unbounded run, so fail loudly
+  // instead of dropping the timeout key.
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw new Error(`${THEN_RUN_INVALID_TIMEOUT} (received ${String(seconds)})`);
+  }
+  const milliseconds = seconds * 1000;
+  if (milliseconds > MAX_TIMEOUT_MILLISECONDS) {
+    throw new Error(`${THEN_RUN_TIMEOUT_TOO_LARGE} (received ${String(seconds)})`);
+  }
+  return milliseconds;
 }
