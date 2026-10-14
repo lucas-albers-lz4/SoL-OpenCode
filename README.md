@@ -36,8 +36,9 @@ Register per [V2 plugin docs](https://dev.opencode.ai/v2/docs/build/plugins).
 
 ## npm
 
-`sol-opencode` is published: **0.1.0** on npmjs (first CI publish via
-GitHub Actions trusted publishing, 2026-10-12 — OIDC, no tokens). Install:
+`sol-opencode` is published on npmjs — the snippet below pins the current
+version. The first CI publish (`v0.1.0`) went out via
+GitHub Actions trusted publishing, 2026-10-12 — OIDC, no tokens. Install:
 
 ```bash
 npm i sol-opencode

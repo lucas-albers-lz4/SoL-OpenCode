@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: MIT
  *
  * Throwaway live probe for session.hook("context") persistence on OpenCode 2.0.27.
- * Do not ship. Load with:
- *   { "plugins": ["./spikes/context-probe.ts"] }
+ * Do not ship. Load the directory form — V2 2.0.27 rejects a direct .ts plugin
+ * path ("configured plugin path must be a directory") and silently never loads it:
+ *   { "plugins": ["./spikes/live/plugins/context-probe"] }
  *
  * Ask the model to call `sol_context_blob` (or any tool whose result includes BLOB below).
  * Mode via plugin options: { "mutate": "replace" | "inplace" }
