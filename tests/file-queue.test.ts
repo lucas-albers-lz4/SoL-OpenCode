@@ -3,11 +3,14 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { link, mkdtemp, writeFile } from "node:fs/promises";
+import { link, mkdtemp, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { withFusedFileQueues } from "../src/action-fusion/file-queue.js";
+import {
+  withFusedFileQueue,
+  withFusedFileQueues,
+} from "../src/action-fusion/file-queue.js";
 
 function timeout(ms: number): Promise<never> {
   return new Promise((_, reject) => {
@@ -83,8 +86,10 @@ describe("withFusedFileQueues", () => {
     await link(original, linked);
 
     const events: string[] = [];
+    // The singular entry point is the one `edit` and `write` use; the plural one is `patch`.
+    // Both must find the same lock for the same bytes.
     const work = (label: string, path: string, delayMs: number) =>
-      withFusedFileQueues([path], async () => {
+      withFusedFileQueue(path, async () => {
         events.push(`${label}:start`);
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         events.push(`${label}:end`);
@@ -162,4 +167,102 @@ describe("withFusedFileQueues", () => {
       `${starters[1]}:end`,
     ]);
   });
+
+  it("serializes the same path through the single-path and multi-path APIs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-mixed-"));
+    const filePath = join(dir, "a.txt");
+    await writeFile(filePath, "a\n", "utf8");
+
+    const events: string[] = [];
+    const work = (label: string) => async () => {
+      events.push(`${label}:start`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      events.push(`${label}:end`);
+      return label;
+    };
+
+    // `edit`/`write` take the singular path, `patch` the plural one; one file, one lock.
+    await Promise.all([
+      withFusedFileQueue(filePath, work("edit")),
+      withFusedFileQueues([filePath], work("patch")),
+    ]);
+
+    const starters = events
+      .filter((event) => event.endsWith(":start"))
+      .map((event) => event.slice(0, -":start".length));
+    expect(starters.slice().sort()).toEqual(["edit", "patch"]);
+    expect(events).toEqual([
+      `${starters[0]}:start`,
+      `${starters[0]}:end`,
+      `${starters[1]}:start`,
+      `${starters[1]}:end`,
+    ]);
+  });
+
+  it("serializes a hardlink alias reached through the other API", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-alias-mixed-"));
+    const original = join(dir, "a.txt");
+    const linked = join(dir, "b.txt");
+    await writeFile(original, "shared bytes\n", "utf8");
+    await link(original, linked);
+
+    const events: string[] = [];
+    const work = (label: string) => async () => {
+      events.push(`${label}:start`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      events.push(`${label}:end`);
+      return label;
+    };
+
+    await Promise.all([
+      withFusedFileQueue(linked, work("edit-via-alias")),
+      withFusedFileQueues([original], work("patch-via-original")),
+    ]);
+
+    const starters = events
+      .filter((event) => event.endsWith(":start"))
+      .map((event) => event.slice(0, -":start".length));
+    expect(starters.slice().sort()).toEqual(["edit-via-alias", "patch-via-original"]);
+    expect(events).toEqual([
+      `${starters[0]}:start`,
+      `${starters[0]}:end`,
+      `${starters[1]}:start`,
+      `${starters[1]}:end`,
+    ]);
+  });
+
+  it("still excludes a path renamed away inside the critical section", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-renamed-"));
+    const filePath = join(dir, "a.txt");
+    await writeFile(filePath, "a\n", "utf8");
+
+    let concurrent = 0;
+    let peak = 0;
+    const section = async (label: string, ms: number) => {
+      concurrent += 1;
+      peak = Math.max(peak, concurrent);
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      concurrent -= 1;
+      return label;
+    };
+
+    let renamed!: () => void;
+    const renameHappened = new Promise<void>((resolveRenamed) => {
+      renamed = resolveRenamed;
+    });
+
+    const holder = withFusedFileQueue(filePath, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await rename(filePath, `${filePath}.moved`);
+      renamed();
+      return section("holder", 40);
+    });
+    // Enqueued after the rename, while the holder still runs: the inode key no longer matches
+    // the name, so only the retained path key keeps this out of the critical section.
+    const late = renameHappened.then(() => withFusedFileQueue(filePath, () => section("late", 5)));
+
+    await Promise.all([holder, late]);
+    expect(peak).toBe(1);
+  });
 });
+
