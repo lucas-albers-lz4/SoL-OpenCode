@@ -6,7 +6,7 @@ Pinned build: `@opencode/cli@2.0.27` / `@opencode/plugin@2.0.27` ([pin.md](./pin
 
 | Topic | Finding |
 |-------|---------|
-| Plugin entry | `Plugin.define({ id, setup })` in `@opencode/plugin/promise/plugin.js`; `setup` may be `async` and return a cleanup function ([`plugin.d.ts`](../node_modules/@opencode/plugin/dist/promise/plugin.d.ts)). |
+| Plugin entry | `Plugin.define({ id, setup })` in `@opencode/plugin/promise/plugin`; `setup` may be `async` and return a cleanup function ([`plugin.d.ts`](../node_modules/@opencode/plugin/dist/promise/plugin.d.ts)). |
 | Tool transform | `ctx.tool.transform((editor) => void)` registers a callback; `Transform` returns `Registration` with `dispose` ([`registration.d.ts`](../node_modules/@opencode/plugin/dist/promise/registration.d.ts)). |
 | `ToolEditor` | `get(id)`, `update(id, (tool) => void)` — missing IDs are ignored on update ([`tool.d.ts`](../node_modules/@opencode/plugin/dist/promise/tool.d.ts)). |
 | `editor.update` / `execute` | Promise adapter wraps the **current** effect executor in `promiseExecutor`, passes a mutable `Info` into the update callback, then reassigns `tool.execute` to call the **post-update** promise executor ([`adapter.js`](../node_modules/@opencode/plugin/dist/promise/adapter.js) ~346–356). Wrap logic must capture `tool.execute` **inside** `update`, not outside. |
