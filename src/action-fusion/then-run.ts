@@ -41,15 +41,34 @@ async function fileSha256(path: string): Promise<string> {
   return createHash("sha256").update(await readFile(path)).digest("hex");
 }
 
+/** State of a path that a fused mutation may have removed. */
+const MISSING_FILE_STATE = "<missing>";
+
+async function fileState(path: string): Promise<string> {
+  try {
+    return await fileSha256(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    // Mirrors `isMissingPathError` in file-queue.ts: ENOENT and ENOTDIR both mean
+    // "no file here", neither is interference.
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return MISSING_FILE_STATE;
+    }
+    throw error;
+  }
+}
+
 export async function assertUnchangedBeforeCommand(
   path: string,
   yieldForInterference: () => Promise<void> = () => new Promise<void>((resolve) => setImmediate(resolve)),
 ): Promise<void> {
   try {
-    const mutationHash = await fileSha256(path);
+    // Existence-aware: a delete target or a rename source is absent both before and
+    // after the command slot, which is not interference — only a state change is.
+    const mutationState = await fileState(path);
     await yieldForInterference();
-    const commandHash = await fileSha256(path);
-    if (mutationHash !== commandHash) {
+    const commandState = await fileState(path);
+    if (mutationState !== commandState) {
       throw new Error("target content changed after the fused mutation");
     }
   } catch (error) {
@@ -109,6 +128,11 @@ function appendResultText(result: Tool.Result, text: string): Tool.Result {
     };
   }
   return { ...result, content: [{ type: "text" as const, text }] };
+}
+
+/** Attach an explicit skip marker to a mutation result whose follow-up never ran. */
+export function appendThenRunSkipNotice(result: Tool.Result, reason: string): Tool.Result {
+  return appendResultText(result, `${THEN_RUN_SKIPPED} ${reason}`);
 }
 
 function thenRunFailedError(mutationResult: Tool.Result, error: unknown): Error {
