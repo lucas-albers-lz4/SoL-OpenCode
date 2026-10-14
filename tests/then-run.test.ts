@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { link, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Tool } from "@opencode/schema/tool";
@@ -209,5 +209,48 @@ describe("patch then_run fusion guard", () => {
     expect(shellExecute).toHaveBeenCalledWith({ command: "echo after-rename" }, mockContext);
     expect(textOf(result)).toContain("[then_run:succeeded]");
     expect(textOf(result)).not.toContain("[then_run:skipped]");
+  });
+
+  it("runs the command when the same bytes were changed through a hardlink alias", async () => {
+    // #36's model-visible effect, at the marker level: two names for one inode must serialize,
+    // or the fused section reads the other write as interference and skips the command.
+    const dir = await mkdtemp(join(tmpdir(), "then-run-alias-"));
+    const original = join(dir, "a.txt");
+    const alias = join(dir, "b.txt");
+    await writeFile(original, "base\n", "utf8");
+    await link(original, alias);
+
+    const shellExecute = vi.fn(async () => ({
+      content: "shell",
+      metadata: { exit: 0 },
+    })) as ShellExecute;
+    const mutateVia = (writePath: string) => async () => {
+      await writeFile(writePath, "base\nchanged\n", "utf8");
+      return { content: `wrote ${writePath}` };
+    };
+
+    const results = await Promise.all([
+      executeMutationThenRunSinglePath({
+        cwd: dir,
+        absolutePath: original,
+        thenRun: { command: "echo via-original" },
+        context: mockContext,
+        shellExecute,
+        mutate: mutateVia(alias),
+      }),
+      executeMutationThenRunSinglePath({
+        cwd: dir,
+        absolutePath: alias,
+        thenRun: { command: "echo via-alias" },
+        context: mockContext,
+        shellExecute,
+        mutate: mutateVia(original),
+      }),
+    ]);
+
+    const text = results.map((result) => textOf(result)).join("\n");
+    expect(shellExecute).toHaveBeenCalledTimes(2);
+    expect(text).not.toContain("[then_run:skipped]");
+    expect(text).toContain("[then_run:succeeded]");
   });
 });

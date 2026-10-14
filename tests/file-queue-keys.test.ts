@@ -52,8 +52,20 @@ describe("queue keys from unusual stat results", () => {
     // `ino === 0` is "no inode reported" (some Windows and FUSE mounts). Without that escape
     // hatch both files key on `inode:<dev>:0` and unrelated work serializes behind them.
     mockedStat.mockResolvedValue({ dev: 1, ino: 0 } as unknown as StatResult);
+    const callsBefore = mockedStat.mock.calls.length;
 
     expect(await peakConcurrency([first, second])).toBe(2);
+    // Without this the test would keep passing if the key derivation stopped calling stat.
+    expect(mockedStat.mock.calls.length - callsBefore).toBe(2);
+  });
+
+  it("surfaces a stat failure that is neither ENOENT nor ENOTDIR", async () => {
+    const [first] = await twoExistingPaths();
+    // A permission or I/O failure must not silently drop the inode key: that would restore the
+    // interleaving this module exists to prevent, with a green suite.
+    mockedStat.mockRejectedValue(Object.assign(new Error("permission denied"), { code: "EACCES" }));
+
+    await expect(withFusedFileQueue(first, async () => "never")).rejects.toThrow(/permission denied/u);
   });
 
   it("keeps two files apart when only the device differs", async () => {

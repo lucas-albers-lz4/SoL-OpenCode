@@ -24,10 +24,13 @@ function isMissingPathError(error: unknown): boolean {
 }
 
 /**
- * Identify a file by its inode: `realpath` resolves symlinks and the ancestor walk covers
- * missing files, but neither sees that two names are the same bytes through a hardlink. Two
- * aliases sharing one inode must share one queue or two fused operations on the same bytes
- * interleave.
+ * Identify a file by its inode: `realpath` resolves a symlink whose target exists, and the
+ * ancestor walk covers missing files, but neither sees that two names are the same bytes
+ * through a hardlink. Two aliases sharing one inode must share one queue or two fused
+ * operations on the same bytes interleave.
+ *
+ * Not covered: a dangling symlink, whose target does not exist yet, keeps its own path key
+ * because `realpath` and `stat` both fail on it (see #56).
  *
  * `ino === 0` means the platform did not report an inode (some Windows and FUSE mounts), so
  * the file keeps its path key rather than collapsing every file onto one queue.
@@ -56,9 +59,12 @@ async function pathQueueKey(resolvedPath: string): Promise<string> {
 
 /**
  * Every key that must be held to own a path: the path key always, plus the inode key when the
- * file exists. Retaining the path key is what keeps the exclusion alive across a section that
- * renames or deletes its own path — an inode key alone stops matching the moment the name is
+ * file exists. Retaining the path key keeps the exclusion alive for the locked *name* across a
+ * section that renames or deletes it — an inode key alone stops matching the moment the name is
  * gone, which would let a later operation start inside the critical section.
+ *
+ * Keys are derived when an operation is enqueued, so an alias that appears while a section is
+ * already running contributes no inode key and is not covered by it.
  *
  * These keys are opaque queue names, not paths: nothing may canonicalize them a second time.
  */
