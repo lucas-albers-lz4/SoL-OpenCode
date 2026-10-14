@@ -98,20 +98,46 @@ describe("extendToolInputWithThenRun JSON Schema", () => {
   it("logs why then_run is unavailable for an unsupported family (issue #41 item 7)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-    const union = Schema.Union([
-      Schema.Struct({ a: Schema.String }),
-      Schema.Struct({ b: Schema.String }),
-    ]);
-    const suspended = Schema.suspend(() => Schema.Struct({ c: Schema.String }));
+    try {
+      const union = Schema.Union([
+        Schema.Struct({ a: Schema.String }),
+        Schema.Struct({ b: Schema.String }),
+      ]);
+      const suspended = Schema.suspend(() => Schema.Struct({ c: Schema.String }));
 
-    for (const schema of [union, suspended]) {
-      expect(extendToolInputWithThenRun(schema, "fused")).toBe(schema);
+      for (const schema of [union, suspended]) {
+        expect(extendToolInputWithThenRun(schema, "fused")).toBe(schema);
+      }
+
+      const warnings = warn.mock.calls.flat().join(" ");
+      expect(warnings).toContain("then_run unavailable");
+      expect(warnings).toContain("effect-schema");
+    } finally {
+      // A failing assertion must not leave console.warn stubbed for the rest of the file.
+      warn.mockRestore();
     }
+  });
 
-    const warnings = warn.mock.calls.flat().join(" ");
-    expect(warnings).toContain("then_run unavailable");
-    expect(warnings).toContain("effect-schema");
-    warn.mockRestore();
+  it("names the standard-schema and primitive families as well (issue #41 item 7)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const standardSchema = { "~standard": { version: 1, validate: () => ({ value: undefined }) } };
+      const primitive = "just-a-string";
+
+      expect(extendToolInputWithThenRun(standardSchema as never, "fused")).toBe(standardSchema);
+      expect(extendToolInputWithThenRun(primitive as never, "fused")).toBe(primitive);
+      expect(extendToolInputWithThenRun(null as never, "fused")).toBeNull();
+
+      const warnings = warn.mock.calls.flat().join(" ");
+      expect(warnings).toContain("standard-schema");
+      expect(warnings).toContain("string");
+      expect(warnings).toContain("family (null)");
+      // A bare "object" label was the finding: it named neither family.
+      expect(warnings).not.toContain("family (object)");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("keys off an own then_run property, not an inherited one", () => {

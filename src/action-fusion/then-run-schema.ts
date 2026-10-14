@@ -47,7 +47,13 @@ function isJsonObjectSchema(input: Tool.ValueSchema): input is JsonObjectSchema 
 
 /** Short label for the schema family, so an "unavailable" warning names what it saw. */
 function describeSchemaFamily(input: Tool.ValueSchema): string {
-  if (Schema.isSchema(input)) return isEffectStruct(input) ? "effect-struct" : "effect-schema";
+  // Effect structs are extended before this point, so "effect-struct" is unreachable here and
+  // would read as a contradiction next to "unsupported schema family".
+  if (Schema.isSchema(input)) return "effect-schema";
+  if (input === null) return "null";
+  if (typeof input === "object" && "~standard" in input) {
+    return "standard-schema";
+  }
   if (typeof input === "object" && input !== null && "type" in input) {
     return `json:${String((input as { type?: unknown }).type)}`;
   }

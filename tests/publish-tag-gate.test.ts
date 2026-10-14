@@ -24,8 +24,20 @@ export function extractTagGate(workflow: string): string {
   const stepIndex = lines.findIndex((line) => line.includes(STEP_NAME));
   if (stepIndex < 0) throw new Error(`publish.yml has no "${STEP_NAME}" step`);
 
-  const runIndex = lines.findIndex((line, index) => index > stepIndex && /^\s+run:\s*\|/.test(line));
-  if (runIndex < 0) throw new Error(`the "${STEP_NAME}" step has no block run script`);
+  // Both spellings of the same step count: a block script and a single-line one. Freezing the
+  // YAML shape would make a valid reformat of the gate look like a regression.
+  let runIndex = -1;
+  for (let index = stepIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (/^\s*-\s/u.test(line)) break; // the next step
+    if (/^\s+run:\s*\|\s*$/u.test(line)) {
+      runIndex = index;
+      break;
+    }
+    const inline = /^\s+run:\s*(?!\|)(\S.*)$/u.exec(line);
+    if (inline !== null) return inline[1]!.trim();
+  }
+  if (runIndex < 0) throw new Error(`the "${STEP_NAME}" step has no run script`);
 
   const indent = (lines[runIndex] ?? "").match(/^\s*/u)?.[0].length ?? 0;
   const body: string[] = [];
@@ -38,8 +50,7 @@ export function extractTagGate(workflow: string): string {
   return body.join("\n").trim();
 }
 
-async function runTagGate(version: string, tag: string) {
-  const script = extractTagGate(await readFile(WORKFLOW_PATH, "utf8"));
+async function runScript(script: string, version: string, tag: string) {
   const dir = await mkdtemp(join(tmpdir(), "publish-gate-"));
   await writeFile(join(dir, "package.json"), JSON.stringify({ name: "fixture", version }), "utf8");
 
@@ -52,6 +63,10 @@ async function runTagGate(version: string, tag: string) {
   return { status: result.status, output: `${result.stdout ?? ""}${result.stderr ?? ""}` };
 }
 
+async function runTagGate(version: string, tag: string) {
+  return runScript(extractTagGate(await readFile(WORKFLOW_PATH, "utf8")), version, tag);
+}
+
 describe("publish workflow tag gate", () => {
   it("executes the shipped step and rejects a skewed tag", async () => {
     const matching = await runTagGate("0.1.1", "v0.1.1");
@@ -59,7 +74,44 @@ describe("publish workflow tag gate", () => {
 
     const skewed = await runTagGate("0.1.1", "v0.1.2");
     expect(skewed.status).not.toBe(0);
-    expect(skewed.output).toContain("tag v0.1.2 != package 0.1.1");
+    // It must say which versions disagreed, but the exact wording is not the contract.
+    expect(skewed.output).toContain("0.1.2");
+    expect(skewed.output).toContain("0.1.1");
+  });
+
+  it("still rejects a skewed tag when the step is reformatted or reworded", async () => {
+    const reworded = [
+      "jobs:",
+      "  publish:",
+      "    steps:",
+      `      - name: ${STEP_NAME}`,
+      "        run: |",
+      "          PKG=$(node -p \"require('./package.json').version\")",
+      "          TAG=\"${GITHUB_REF_NAME#v}\"",
+      "          [ \"$PKG\" = \"$TAG\" ] || { echo \"version skew: $TAG vs $PKG\"; exit 1; }",
+    ].join("\n");
+
+    const result = await runScript(extractTagGate(reworded), "0.1.1", "v0.1.2");
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("0.1.1");
+  });
+
+  it("reads a single-line run script for the same step", () => {
+    const singleLine = [
+      "jobs:",
+      "  publish:",
+      "    steps:",
+      `      - name: ${STEP_NAME}`,
+      "        run: PKG=$(node -p \"require('./package.json').version\"); [ \"$PKG\" = \"0.1.1\" ] || exit 1",
+      "      - name: After",
+      "        run: echo done",
+    ].join("\n");
+
+    const script = extractTagGate(singleLine);
+
+    expect(script).toContain("exit 1");
+    expect(script).not.toContain("echo done");
   });
 
   it("fails loudly if the workflow loses the step", () => {
