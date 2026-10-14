@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 
 const queueTails = new Map<string, Promise<void>>();
@@ -23,26 +23,68 @@ function isMissingPathError(error: unknown): boolean {
   );
 }
 
-async function canonicalQueueKey(filePath: string): Promise<string> {
-  const resolvedPath = resolve(filePath);
+/**
+ * Identify a file by its inode: `realpath` resolves a symlink whose target exists, and the
+ * ancestor walk covers missing files, but neither sees that two names are the same bytes
+ * through a hardlink. Two aliases sharing one inode must share one queue or two fused
+ * operations on the same bytes interleave.
+ *
+ * Not covered: a dangling symlink, whose target does not exist yet, keeps its own path key
+ * because `realpath` and `stat` both fail on it (see #56).
+ *
+ * `ino === 0` means the platform did not report an inode (some Windows and FUSE mounts), so
+ * the file keeps its path key rather than collapsing every file onto one queue.
+ */
+function inodeQueueKey(stats: { dev: number; ino: number }): string | undefined {
+  if (stats.ino === 0) return undefined;
+  return `inode:${stats.dev}:${stats.ino}`;
+}
+
+async function pathQueueKey(resolvedPath: string): Promise<string> {
   let current = resolvedPath;
   const missingSegments: string[] = [];
 
   while (true) {
     try {
-      return resolve(await realpath(current), ...missingSegments);
+      return `path:${resolve(await realpath(current), ...missingSegments)}`;
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
       const parent = dirname(current);
-      if (parent === current) return resolvedPath;
+      if (parent === current) return `path:${resolvedPath}`;
       missingSegments.unshift(basename(current));
       current = parent;
     }
   }
 }
 
-export async function withFusedFileQueue<T>(filePath: string, work: () => Promise<T>): Promise<T> {
-  const key = await canonicalQueueKey(filePath);
+/**
+ * Every key that must be held to own a path: the path key always, plus the inode key when the
+ * file exists. Retaining the path key keeps the exclusion alive for the locked *name* across a
+ * section that renames or deletes it — an inode key alone stops matching the moment the name is
+ * gone, which would let a later operation start inside the critical section.
+ *
+ * Keys are derived when an operation is enqueued, so an alias that appears while a section is
+ * already running contributes no inode key and is not covered by it.
+ *
+ * These keys are opaque queue names, not paths: nothing may canonicalize them a second time.
+ */
+async function queueKeysFor(filePath: string): Promise<string[]> {
+  const resolvedPath = resolve(filePath);
+  const pathKey = await pathQueueKey(resolvedPath);
+
+  let stats: { dev: number; ino: number };
+  try {
+    stats = await stat(resolvedPath);
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+    return [pathKey];
+  }
+
+  const inodeKey = inodeQueueKey(stats);
+  return inodeKey === undefined ? [pathKey] : [pathKey, inodeKey];
+}
+
+async function withQueueKey<T>(key: string, work: () => Promise<T>): Promise<T> {
   const previous = queueTails.get(key) ?? Promise.resolve();
   let release!: () => void;
   const owned = new Promise<void>((resolveOwned) => {
@@ -60,20 +102,29 @@ export async function withFusedFileQueue<T>(filePath: string, work: () => Promis
   }
 }
 
+/** Take every key in one stable sorted order, so overlapping acquisitions queue instead of deadlocking. */
+async function withQueueKeys<T>(keys: readonly string[], work: () => Promise<T>): Promise<T> {
+  const uniqueKeys = [...new Set(keys)].sort();
+  if (uniqueKeys.length === 0) return work();
+
+  const runChain = async (index: number): Promise<T> => {
+    if (index >= uniqueKeys.length) return work();
+    return withQueueKey(uniqueKeys[index]!, () => runChain(index + 1));
+  };
+
+  return runChain(0);
+}
+
+/** The queue behind a single mutation tool call (`edit` / `write`). */
+export async function withFusedFileQueue<T>(filePath: string, work: () => Promise<T>): Promise<T> {
+  return withQueueKeys(await queueKeysFor(filePath), work);
+}
+
 /** Acquire per-file queues in stable sorted order (multi-file patch). */
 export async function withFusedFileQueues<T>(
   paths: readonly string[],
   work: () => Promise<T>,
 ): Promise<T> {
-  const uniqueKeys = [
-    ...new Set(await Promise.all(paths.map((path) => canonicalQueueKey(path)))),
-  ].sort();
-  if (uniqueKeys.length === 0) return work();
-
-  const runChain = async (index: number): Promise<T> => {
-    if (index >= uniqueKeys.length) return work();
-    return withFusedFileQueue(uniqueKeys[index]!, () => runChain(index + 1));
-  };
-
-  return runChain(0);
+  const keySets = await Promise.all(paths.map((path) => queueKeysFor(path)));
+  return withQueueKeys(keySets.flat(), work);
 }
