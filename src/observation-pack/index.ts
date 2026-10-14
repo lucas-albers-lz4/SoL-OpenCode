@@ -54,6 +54,10 @@ function failOpen(reason: string, error: unknown): void {
   console.error(`[sol.opencode observation-pack] ${reason}: ${detail}`);
 }
 
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function registerObservationPack(
   ctx: Pick<Context, "tool" | "session" | "storage">,
 ): Promise<{ dispose: () => Promise<void> }> {
@@ -90,10 +94,21 @@ export async function registerObservationPack(
     try {
       disposers.push(await start());
     } catch (error) {
+      const unwindFailures: string[] = [];
       for (const registration of [...disposers].reverse()) {
-        await registration.dispose();
+        try {
+          await registration.dispose();
+        } catch (unwindError) {
+          unwindFailures.push(describeError(unwindError));
+        }
       }
-      throw error;
+      if (unwindFailures.length === 0) throw error;
+      // The registration failure is the diagnosis; a failure while cleaning up must not take
+      // its place in the only message the user sees.
+      throw new Error(
+        `${describeError(error)} (cleanup also failed: ${unwindFailures.join("; ")})`,
+        { cause: error },
+      );
     }
   };
 
@@ -272,9 +287,18 @@ export async function registerObservationPack(
 
   return {
     async dispose() {
-      // Reverse registration order: the last thing registered is the first to go.
+      // Reverse registration order: the last thing registered is the first to go. Every
+      // registration is attempted, so one throwing disposer cannot leave the rest live.
+      const failures: string[] = [];
       for (const registration of [...disposers].reverse()) {
-        await registration.dispose();
+        try {
+          await registration.dispose();
+        } catch (error) {
+          failures.push(describeError(error));
+        }
+      }
+      if (failures.length > 0) {
+        throw new Error(`Observation Pack disposal failed (${failures.join("; ")})`);
       }
     },
   };

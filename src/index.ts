@@ -52,9 +52,19 @@ export default Plugin.define({
     }
 
     return async () => {
-      // Reverse registration order: the last thing registered is the first to go.
+      // Reverse registration order: the last thing registered is the first to go. Every
+      // registration is attempted, so one throwing disposer cannot leave the other
+      // mechanism's hooks live for the rest of the session.
+      const cleanupFailures: string[] = [];
       for (const registration of [...disposers].reverse()) {
-        await registration.dispose();
+        try {
+          await registration.dispose();
+        } catch (error) {
+          cleanupFailures.push(describeError(error));
+        }
+      }
+      if (cleanupFailures.length > 0) {
+        throw new Error(`sol.opencode: disposal failed (${cleanupFailures.join("; ")})`);
       }
     };
   },
