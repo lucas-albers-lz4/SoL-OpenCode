@@ -205,6 +205,8 @@ export interface RecallChunk {
   readonly text: string;
   readonly bytes: number;
   readonly lines: number;
+  /** Byte offset this chunk actually starts at — always a character boundary. */
+  readonly startOffset: number;
   readonly nextOffset: number;
   readonly eof: boolean;
 }
@@ -215,20 +217,52 @@ function trimUtf8End(buffer: Buffer, limit: number): number {
   return end;
 }
 
+/**
+ * Snap a requested offset forward to the next UTF-8 lead byte (or ASCII byte), so a
+ * chunk never begins inside a multi-byte character and decode as U+FFFD. Returns
+ * `size` when nothing but continuation bytes remain, which yields an empty chunk
+ * rather than mojibake.
+ */
+async function utf8AlignedOffset(
+  handle: FileHandle,
+  offset: number,
+  size: number,
+): Promise<number> {
+  if (offset === 0 || offset >= size) return offset;
+
+  // A UTF-8 sequence is at most 4 bytes, so a lead byte is never further than 3
+  // bytes ahead of a mid-character offset.
+  const probeLength = Math.min(4, size - offset);
+  const probe = Buffer.alloc(probeLength);
+  await handle.read(probe, 0, probeLength, offset);
+  for (let index = 0; index < probeLength; index += 1) {
+    if (((probe[index] ?? 0) & 0xc0) !== 0x80) return offset + index;
+  }
+  return size;
+}
+
 export async function readRecallChunk(
   path: string,
   offset: number,
   limits: { readonly maxBytes: number; readonly maxLines: number },
 ): Promise<RecallChunk> {
+  // The tool schema promises `integer, minimum 0`; enforce it here so an invented
+  // offset (negative, fractional, NaN) fails as this clean error instead of leaking a
+  // raw ERR_OUT_OF_RANGE from FileHandle.read.
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error(`Offset ${offset} must be an integer >= 0`);
+  }
+
   const handle = await open(path, READ_OBJECT_FLAGS);
   try {
     const fileStats = await handle.stat();
     if (!fileStats.isFile()) throw new Error("Stored observation is not a regular file");
     if (offset > fileStats.size) throw new Error(`Offset ${offset} exceeds observation size ${fileStats.size}`);
 
-    const available = Math.max(0, fileStats.size - offset);
+    const start = await utf8AlignedOffset(handle, offset, fileStats.size);
+    const available = Math.max(0, fileStats.size - start);
     const buffer = Buffer.alloc(Math.min(available, limits.maxBytes + 4));
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
     let end = Math.min(bytesRead, limits.maxBytes);
     let newlineCount = 0;
 
@@ -243,11 +277,12 @@ export async function readRecallChunk(
 
     end = trimUtf8End(buffer, end);
     const chunk = buffer.subarray(0, end);
-    const nextOffset = offset + chunk.length;
+    const nextOffset = start + chunk.length;
     return {
       text: chunk.toString("utf8"),
       bytes: chunk.length,
       lines: countBufferLines(chunk),
+      startOffset: start,
       nextOffset,
       eof: nextOffset >= fileStats.size,
     };
