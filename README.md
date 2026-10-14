@@ -36,9 +36,10 @@ Register per [V2 plugin docs](https://dev.opencode.ai/v2/docs/build/plugins).
 
 ## npm
 
-`sol-opencode` is published on npmjs — the snippet below pins the current
-version. The first CI publish (`v0.1.0`) went out via
-GitHub Actions trusted publishing, 2026-10-12 — OIDC, no tokens. Install:
+`sol-opencode` is published on npmjs. The plugin config below pins the version
+this README is written against; `npm i sol-opencode` installs the latest. The
+first CI publish (`v0.1.0`) went out via GitHub Actions trusted publishing,
+2026-10-12 — OIDC, no tokens. Install:
 
 ```bash
 npm i sol-opencode
@@ -60,7 +61,7 @@ independent of the local-directory channel above. Pinned against OpenCode **2.0.
 | How you reference it | What OpenCode V2 loads |
 |---|---|
 | Local directory path (clone-to-try, `"package": "/abs/path"` or `"./plugins/x"`) | `<dir>/index.ts` → `<dir>/index.js` directly. **The `exports` map is NOT consulted** on this channel. |
-| Package name / `file:` specifier (the future npm form) | Normal Node resolution via the package.json `exports` map → `dist/index.js`. |
+| Package name / `file:` specifier | Normal Node resolution via the package.json `exports` map → `dist/index.js`. |
 
 The root `index.ts` is the local-directory entrypoint and simply re-exports `src/index.ts`;
 `exports` (→ `dist/`) remains the publish entrypoint. Both channels land on the same implementation,
