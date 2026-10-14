@@ -211,8 +211,14 @@ export async function registerObservationPack(
             throw error;
           }
 
+          // Report the offset the chunk really starts at; a mid-character request is
+          // snapped forward, so the model can page from a boundary again.
+          const offsetLabel =
+            chunk.startOffset === offset
+              ? `offset=${offset}`
+              : `offset=${chunk.startOffset} (requested ${offset}, snapped to a character boundary)`;
           const header = [
-            `[obs_recall id=${params.id} offset=${offset} next_offset=${chunk.nextOffset} eof=${chunk.eof}]`,
+            `[obs_recall id=${params.id} ${offsetLabel} next_offset=${chunk.nextOffset} eof=${chunk.eof}]`,
             `[chunk_bytes=${chunk.bytes} chunk_lines=${chunk.lines}; use next_offset to continue]`,
           ].join("\n");
           const content = `${header}\n${chunk.text}`;
