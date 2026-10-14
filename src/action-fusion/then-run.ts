@@ -41,15 +41,34 @@ async function fileSha256(path: string): Promise<string> {
   return createHash("sha256").update(await readFile(path)).digest("hex");
 }
 
+/** State of a path that a fused mutation may have removed. */
+const MISSING_FILE_STATE = "<missing>";
+
+async function fileState(path: string): Promise<string> {
+  try {
+    return await fileSha256(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    // Mirrors `isMissingPathError` in file-queue.ts: ENOENT and ENOTDIR both mean
+    // "no file here", neither is interference.
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return MISSING_FILE_STATE;
+    }
+    throw error;
+  }
+}
+
 export async function assertUnchangedBeforeCommand(
   path: string,
   yieldForInterference: () => Promise<void> = () => new Promise<void>((resolve) => setImmediate(resolve)),
 ): Promise<void> {
   try {
-    const mutationHash = await fileSha256(path);
+    // Existence-aware: a delete target or a rename source is absent both before and
+    // after the command slot, which is not interference — only a state change is.
+    const mutationState = await fileState(path);
     await yieldForInterference();
-    const commandHash = await fileSha256(path);
-    if (mutationHash !== commandHash) {
+    const commandState = await fileState(path);
+    if (mutationState !== commandState) {
       throw new Error("target content changed after the fused mutation");
     }
   } catch (error) {
@@ -84,7 +103,8 @@ export async function executeThenRun(
   shellExecute: ShellExecute,
 ): Promise<string> {
   if (thenRun.command.trim() === "") {
-    throw new Error(`${THEN_RUN_FAILED} empty command`);
+    // `thenRunFailedError` prepends the marker for this path; do not duplicate it.
+    throw new Error("empty command");
   }
 
   const timeoutMs = thenRunTimeoutMs(thenRun);
@@ -111,6 +131,11 @@ function appendResultText(result: Tool.Result, text: string): Tool.Result {
   return { ...result, content: [{ type: "text" as const, text }] };
 }
 
+/** Attach an explicit skip marker to a mutation result whose follow-up never ran. */
+export function appendThenRunSkipNotice(result: Tool.Result, reason: string): Tool.Result {
+  return appendResultText(result, `${THEN_RUN_SKIPPED} ${reason}`);
+}
+
 function thenRunFailedError(mutationResult: Tool.Result, error: unknown): Error {
   const mutationOutput = resultText(mutationResult);
   return new Error(
@@ -122,6 +147,7 @@ export async function executeMutationThenRunSinglePath({
   cwd,
   absolutePath,
   thenRun,
+  skipReason,
   mutate,
   context,
   shellExecute,
@@ -129,6 +155,8 @@ export async function executeMutationThenRunSinglePath({
   readonly cwd: string;
   readonly absolutePath: string;
   readonly thenRun: ThenRunInput | undefined;
+  /** Set when `then_run` was present but unusable; carried so the reason survives a throw. */
+  readonly skipReason?: string;
   readonly mutate: () => Promise<Tool.Result>;
   readonly context: ToolContext;
   readonly shellExecute: ShellExecute | undefined;
@@ -138,12 +166,13 @@ export async function executeMutationThenRunSinglePath({
     try {
       mutationResult = await mutate();
     } catch (error) {
-      if (thenRun !== undefined) {
-        throw new Error(
-          `${errorText(error)}\n\n${THEN_RUN_SKIPPED} The file mutation did not complete successfully; the command was not run.`,
-        );
+      if (thenRun === undefined && skipReason === undefined) {
+        throw error;
       }
-      throw error;
+      // A malformed `then_run` normalises to `thenRun: undefined`, so its reason has to be
+      // carried separately or the caller's mistake disappears on this path.
+      const reason = skipReason ?? "The file mutation did not complete successfully";
+      throw new Error(`${errorText(error)}\n\n${THEN_RUN_SKIPPED} ${reason}; the command was not run.`);
     }
 
     if (thenRun === undefined) {
@@ -168,6 +197,7 @@ export async function executeMutationThenRunPatch({
   cwd,
   relativePaths,
   thenRun,
+  skipReason,
   mutate,
   context,
   shellExecute,
@@ -175,6 +205,8 @@ export async function executeMutationThenRunPatch({
   readonly cwd: string;
   readonly relativePaths: readonly string[];
   readonly thenRun: ThenRunInput | undefined;
+  /** Set when `then_run` was present but unusable; carried so the reason survives a throw. */
+  readonly skipReason?: string;
   readonly mutate: () => Promise<Tool.Result>;
   readonly context: ToolContext;
   readonly shellExecute: ShellExecute | undefined;
@@ -186,12 +218,11 @@ export async function executeMutationThenRunPatch({
     try {
       mutationResult = await mutate();
     } catch (error) {
-      if (thenRun !== undefined) {
-        throw new Error(
-          `${errorText(error)}\n\n${THEN_RUN_SKIPPED} The patch did not complete successfully; the command was not run.`,
-        );
+      if (thenRun === undefined && skipReason === undefined) {
+        throw error;
       }
-      throw error;
+      const reason = skipReason ?? "The patch did not complete successfully";
+      throw new Error(`${errorText(error)}\n\n${THEN_RUN_SKIPPED} ${reason}; the command was not run.`);
     }
 
     if (thenRun === undefined) {

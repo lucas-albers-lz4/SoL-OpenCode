@@ -9,6 +9,7 @@ import type { Types } from "effect";
 import { resolveMutationPath } from "./file-queue.js";
 import { enumeratePatchWrittenPaths } from "./patch-paths.js";
 import {
+  appendThenRunSkipNotice,
   executeMutationThenRunPatch,
   executeMutationThenRunSinglePath,
   type ShellExecute,
@@ -66,7 +67,7 @@ function wrapToolExecute(
   tool.input = inputWithOptionalThenRun(toolId, tool.input, config);
 
   tool.execute = async (input: unknown, context: ToolContext) => {
-    const { mutationInput, thenRun } = stripThenRun(
+    const { mutationInput, thenRun, skipReason } = stripThenRun(
       typeof input === "object" && input !== null ? (input as Record<string, unknown>) : {},
     );
 
@@ -80,17 +81,33 @@ function wrapToolExecute(
           : "";
 
       const writtenPaths = enumeratePatchWrittenPaths(patchText);
-      const effectiveThenRun =
-        writtenPaths !== undefined && writtenPaths.length > 0 ? thenRun : undefined;
 
-      return executeMutationThenRunPatch({
+      // A parsed patch that touches no path cannot queue or guard a follow-up, so
+      // report the skip instead of returning plain success.
+      if (writtenPaths !== undefined && writtenPaths.length === 0) {
+        const mutationResult = await currentExecute(mutationInput, context);
+        const reason = skipReason ?? "the patch touches no file path; the command was not run.";
+        return thenRun === undefined && skipReason === undefined
+          ? mutationResult
+          : appendThenRunSkipNotice(mutationResult, reason);
+      }
+
+      const patchResult = await executeMutationThenRunPatch({
         cwd: config.cwd,
         relativePaths: writtenPaths ?? [],
-        thenRun: effectiveThenRun,
+        // An unparseable patch keeps the historical silent omission: its touched
+        // paths are unknowable, so the follow-up is neither queued nor run.
+        thenRun: writtenPaths === undefined ? undefined : thenRun,
+        skipReason,
         context,
         shellExecute: config.shellExecute,
         mutate: () => currentExecute(mutationInput, context),
       });
+
+      // A malformed `then_run` applies the mutation but must not report plain success.
+      return skipReason === undefined
+        ? patchResult
+        : appendThenRunSkipNotice(patchResult, skipReason);
     }
 
     const pathValue =
@@ -101,14 +118,19 @@ function wrapToolExecute(
         ? (mutationInput as { path: string }).path
         : "";
 
-    return executeMutationThenRunSinglePath({
+    const singlePathResult = await executeMutationThenRunSinglePath({
       cwd: config.cwd,
       absolutePath: resolveMutationPath(config.cwd, pathValue),
       thenRun,
+      skipReason,
       context,
       shellExecute: config.shellExecute,
       mutate: () => currentExecute(mutationInput, context),
     });
+
+    return skipReason === undefined
+      ? singlePathResult
+      : appendThenRunSkipNotice(singlePathResult, skipReason);
   };
 }
 

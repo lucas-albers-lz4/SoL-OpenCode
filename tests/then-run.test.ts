@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { link, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Tool } from "@opencode/schema/tool";
@@ -57,48 +57,389 @@ describe("executeThenRun", () => {
   });
 });
 
+function patchToolHarness({
+  cwd,
+  shellExecute,
+  mutate,
+}: {
+  cwd: string;
+  shellExecute: ShellExecute;
+  mutate: () => Promise<Tool.Result>;
+}) {
+  let stored: {
+    id: string;
+    name: string;
+    description: string;
+    input: unknown;
+    execute: (...args: unknown[]) => Promise<Tool.Result>;
+  } = {
+    id: "patch",
+    name: "patch",
+    description: "patch",
+    input: { type: "object" as const, properties: { patchText: { type: "string" } } },
+    execute: mutate as (...args: unknown[]) => Promise<Tool.Result>,
+  };
+
+  const editor = {
+    get: (id: string) => {
+      if (id === "shell") return { ...stored, execute: shellExecute };
+      if (id === "patch") return { ...stored, execute: stored.execute };
+      return undefined;
+    },
+    update: (id: string, update: (tool: typeof stored) => void) => {
+      if (id !== "patch") return;
+      const draft = { ...stored, execute: stored.execute };
+      update(draft);
+      stored = { ...stored, ...draft, execute: draft.execute };
+    },
+    list: () => [stored],
+    add: () => {},
+    remove: () => {},
+    namespace: () => {},
+  };
+
+  applyActionFusionToEditor(editor, { cwd, patchThenRunInSchema: true });
+
+  return {
+    mutate,
+    execute: (args: Record<string, unknown>): Promise<Tool.Result> =>
+      stored.execute(args, mockContext) as Promise<Tool.Result>,
+  };
+}
+
+function singlePathToolHarness({
+  toolId,
+  cwd,
+  shellExecute,
+  mutate,
+}: {
+  toolId: "edit" | "write";
+  cwd: string;
+  shellExecute: ShellExecute;
+  mutate: () => Promise<Tool.Result>;
+}) {
+  let stored: {
+    id: string;
+    name: string;
+    description: string;
+    input: unknown;
+    execute: (...args: unknown[]) => Promise<Tool.Result>;
+  } = {
+    id: toolId,
+    name: toolId,
+    description: toolId,
+    input: { type: "object" as const, properties: { path: { type: "string" } } },
+    execute: mutate as (...args: unknown[]) => Promise<Tool.Result>,
+  };
+
+  const editor = {
+    get: (id: string) => {
+      if (id === "shell") return { ...stored, execute: shellExecute };
+      if (id === toolId) return { ...stored, execute: stored.execute };
+      return undefined;
+    },
+    update: (id: string, update: (tool: typeof stored) => void) => {
+      if (id !== toolId) return;
+      const draft = { ...stored, execute: stored.execute };
+      update(draft);
+      stored = { ...stored, ...draft, execute: draft.execute };
+    },
+    list: () => [stored],
+    add: () => {},
+    remove: () => {},
+    namespace: () => {},
+  };
+
+  applyActionFusionToEditor(editor, { cwd, patchThenRunInSchema: true });
+
+  return {
+    mutate,
+    execute: (args: Record<string, unknown>): Promise<Tool.Result> =>
+      stored.execute(args, mockContext) as Promise<Tool.Result>,
+  };
+}
+
+function textOf(result: Tool.Result): string {
+  if (typeof result.content === "string") {
+    return result.content;
+  }
+  if (Array.isArray(result.content)) {
+    return result.content.map((block) => ("text" in block ? block.text : "")).join("\n");
+  }
+  return "";
+}
+
 describe("patch then_run fusion guard", () => {
-  it("skips then_run when patch paths cannot be enumerated", async () => {
+  it("keeps the silent omission when patch paths cannot be enumerated", async () => {
     const shellExecute = vi.fn(async () => ({
       content: "shell",
       metadata: { exit: 0 },
     })) as ShellExecute;
-    const baseExecute = vi.fn(async () => ({ content: "patched" }));
+    const mutate = vi.fn(async () => ({ content: "patched" }));
+    const harness = patchToolHarness({ cwd: "/tmp/project", shellExecute, mutate });
 
-    let stored = {
-      id: "patch",
-      name: "patch",
-      description: "patch",
-      input: { type: "object" as const, properties: { patchText: { type: "string" } } },
-      execute: baseExecute,
-    };
+    const result = await harness.execute({
+      patchText: "not a patch",
+      then_run: { command: "echo skipped" },
+    });
 
-    const editor = {
-      get: (id: string) => {
-        if (id === "shell") return { ...stored, execute: shellExecute };
-        if (id === "patch") return { ...stored, execute: stored.execute };
-        return undefined;
-      },
-      update: (id: string, update: (tool: typeof stored) => void) => {
-        if (id !== "patch") return;
-        const draft = { ...stored, execute: stored.execute };
-        update(draft);
-        stored = { ...stored, ...draft, execute: draft.execute };
-      },
-      list: () => [stored],
-      add: () => {},
-      remove: () => {},
-      namespace: () => {},
-    };
+    expect(mutate).toHaveBeenCalled();
+    expect(shellExecute).not.toHaveBeenCalled();
+    expect(textOf(result)).toBe("patched");
+  });
 
-    applyActionFusionToEditor(editor, { cwd: "/tmp/project", patchThenRunInSchema: true });
+  it("runs then_run for a delete-only patch even though the target is gone", async () => {
+    const shellExecute = vi.fn(async () => ({
+      content: "after-delete",
+      metadata: { exit: 0 },
+    })) as ShellExecute;
+    const dir = await mkdtemp(join(tmpdir(), "then-run-delete-"));
+    const target = join(dir, "gone.txt");
+    await writeFile(target, "bye\n", "utf8");
 
-    await stored.execute(
-      { patchText: "not a patch", then_run: { command: "echo skipped" } },
-      mockContext,
+    const mutate = vi.fn(async () => {
+      await rm(target, { force: true });
+      return { content: "deleted" };
+    });
+    const harness = patchToolHarness({ cwd: dir, shellExecute, mutate });
+
+    const result = await harness.execute({
+      patchText: "*** Begin Patch\n*** Delete File: gone.txt\n*** End Patch",
+      then_run: { command: "echo after-delete" },
+    });
+
+    expect(mutate).toHaveBeenCalled();
+    expect(shellExecute).toHaveBeenCalledWith({ command: "echo after-delete" }, mockContext);
+    expect(textOf(result)).toContain("[then_run:succeeded]");
+    expect(textOf(result)).not.toContain("[then_run:skipped]");
+  });
+
+  it("reports an explicit skip for a parsed patch that touches no path", async () => {
+    const shellExecute = vi.fn(async () => ({
+      content: "shell",
+      metadata: { exit: 0 },
+    })) as ShellExecute;
+    const mutate = vi.fn(async () => ({ content: "patched" }));
+    const harness = patchToolHarness({ cwd: "/tmp/project", shellExecute, mutate });
+
+    const withThenRun = await harness.execute({
+      patchText: "*** Begin Patch\n*** End Patch",
+      then_run: { command: "echo zero" },
+    });
+
+    expect(mutate).toHaveBeenCalled();
+    expect(shellExecute).not.toHaveBeenCalled();
+    expect(textOf(withThenRun)).toContain("[then_run:skipped]");
+
+    const withoutThenRun = await harness.execute({ patchText: "*** Begin Patch\n*** End Patch" });
+    expect(textOf(withoutThenRun)).toBe("patched");
+  });
+
+  it("runs then_run for a rename patch, where a moving update removes its source", async () => {
+    const shellExecute = vi.fn(async () => ({
+      content: "after-rename",
+      metadata: { exit: 0 },
+    })) as ShellExecute;
+    const dir = await mkdtemp(join(tmpdir(), "then-run-rename-"));
+    const source = join(dir, "old.txt");
+    const destination = join(dir, "new.txt");
+    await writeFile(source, "old\n", "utf8");
+
+    const mutate = vi.fn(async () => {
+      await rename(source, destination);
+      return { content: "renamed" };
+    });
+    const harness = patchToolHarness({ cwd: dir, shellExecute, mutate });
+
+    const result = await harness.execute({
+      patchText:
+        "*** Begin Patch\n*** Update File: old.txt\n*** Move to: new.txt\n@@\n-old\n+new\n*** End Patch",
+      then_run: { command: "echo after-rename" },
+    });
+
+    expect(mutate).toHaveBeenCalled();
+    expect(shellExecute).toHaveBeenCalledWith({ command: "echo after-rename" }, mockContext);
+    expect(textOf(result)).toContain("[then_run:succeeded]");
+    expect(textOf(result)).not.toContain("[then_run:skipped]");
+  });
+
+  it("reports a malformed then_run as a skip instead of plain success", async () => {
+    const shellExecute = vi.fn(async () => ({
+      content: "shell",
+      metadata: { exit: 0 },
+    })) as ShellExecute;
+    const mutate = vi.fn(async () => ({ content: "patched" }));
+    const harness = patchToolHarness({ cwd: "/tmp/project", shellExecute, mutate });
+
+    const result = await harness.execute({
+      patchText: "*** Begin Patch\n*** Update File: a.txt\n@@\n-one\n+two\n*** End Patch",
+      then_run: "echo hi",
+    });
+
+    expect(mutate).toHaveBeenCalled();
+    expect(shellExecute).not.toHaveBeenCalled();
+    expect(textOf(result)).toContain("[then_run:skipped]");
+    expect(textOf(result)).toContain("then_run must be an object");
+  });
+
+  it("reports a malformed then_run for an edit instead of plain success", async () => {
+    const shellExecute = vi.fn(async () => ({
+      content: "shell",
+      metadata: { exit: 0 },
+    })) as ShellExecute;
+    const harness = singlePathToolHarness({
+      toolId: "edit",
+      cwd: "/tmp/project",
+      shellExecute,
+      mutate: async () => ({ content: "edited" }),
+    });
+
+    const result = await harness.execute({ path: "a.txt", then_run: "echo hi" });
+
+    expect(shellExecute).not.toHaveBeenCalled();
+    expect(textOf(result)).toContain("edited");
+    expect(textOf(result)).toContain("[then_run:skipped]");
+    expect(textOf(result)).toContain("then_run must be an object");
+  });
+
+  it("reports the malformed reason for a zero-path patch, not the generic one", async () => {
+    const shellExecute = vi.fn(async () => ({
+      content: "shell",
+      metadata: { exit: 0 },
+    })) as ShellExecute;
+    const harness = patchToolHarness({
+      cwd: "/tmp/project",
+      shellExecute,
+      mutate: async () => ({ content: "patched" }),
+    });
+
+    const result = await harness.execute({
+      patchText: "*** Begin Patch\n*** End Patch",
+      then_run: { command: "   " },
+    });
+
+    expect(textOf(result)).toContain("patched");
+    expect(textOf(result)).toContain("then_run.command must be a non-empty string");
+    expect(textOf(result)).not.toContain("touches no file path");
+  });
+
+  it("marks a blank command as failed exactly once", async () => {
+    const shellExecute = vi.fn(async () => ({
+      content: "shell",
+      metadata: { exit: 0 },
+    })) as ShellExecute;
+    const dir = await mkdtemp(join(tmpdir(), "then-run-blank-"));
+    const target = join(dir, "a.txt");
+    await writeFile(target, "a\n", "utf8");
+
+    const failure = await executeMutationThenRunSinglePath({
+      cwd: dir,
+      absolutePath: target,
+      thenRun: { command: "   " },
+      context: mockContext,
+      shellExecute,
+      mutate: async () => ({ content: "MUT-OUT" }),
+    }).then(
+      () => undefined,
+      (error: Error) => error,
     );
 
-    expect(baseExecute).toHaveBeenCalled();
+    const message = String(failure?.message);
+    expect(message).toContain("MUT-OUT");
+    expect(message).toContain("empty command");
+    expect(message.match(/\[then_run:failed\]/gu) ?? []).toHaveLength(1);
     expect(shellExecute).not.toHaveBeenCalled();
+  });
+
+  it("keeps the malformed reason when the mutation fails too", async () => {
+    const shellExecute = vi.fn(async () => ({
+      content: "shell",
+      metadata: { exit: 0 },
+    })) as ShellExecute;
+    const harness = patchToolHarness({
+      cwd: "/tmp/project",
+      shellExecute,
+      mutate: async () => {
+        throw new Error("patch boom");
+      },
+    });
+
+    const failure = await harness
+      .execute({
+        patchText: "*** Begin Patch\n*** Update File: a.txt\n@@\n-one\n+two\n*** End Patch",
+        then_run: "echo hi",
+      })
+      .then(
+        () => undefined,
+        (error: Error) => error,
+      );
+
+    const message = String(failure?.message);
+    expect(message).toContain("patch boom");
+    expect(message).toContain("[then_run:skipped]");
+    expect(message).toContain("then_run must be an object");
+  });
+
+  it("preserves the mutation output when the follow-up is skipped", async () => {
+    const shellExecute = vi.fn(async () => ({
+      content: "shell",
+      metadata: { exit: 0 },
+    })) as ShellExecute;
+    const harness = patchToolHarness({
+      cwd: "/tmp/project",
+      shellExecute,
+      mutate: async () => ({ content: "MUTATION-VISIBLE" }),
+    });
+
+    const result = await harness.execute({
+      patchText: "*** Begin Patch\n*** End Patch",
+      then_run: { command: "echo skipped" },
+    });
+
+    expect(textOf(result)).toContain("MUTATION-VISIBLE");
+    expect(textOf(result)).toContain("[then_run:skipped]");
+  });
+
+  it("runs the command when the same bytes were changed through a hardlink alias", async () => {
+    // #36's model-visible effect, at the marker level: two names for one inode must serialize,
+    // or the fused section reads the other write as interference and skips the command.
+    const dir = await mkdtemp(join(tmpdir(), "then-run-alias-"));
+    const original = join(dir, "a.txt");
+    const alias = join(dir, "b.txt");
+    await writeFile(original, "base\n", "utf8");
+    await link(original, alias);
+
+    const shellExecute = vi.fn(async () => ({
+      content: "shell",
+      metadata: { exit: 0 },
+    })) as ShellExecute;
+    const mutateVia = (writePath: string) => async () => {
+      await writeFile(writePath, "base\nchanged\n", "utf8");
+      return { content: `wrote ${writePath}` };
+    };
+
+    const results = await Promise.all([
+      executeMutationThenRunSinglePath({
+        cwd: dir,
+        absolutePath: original,
+        thenRun: { command: "echo via-original" },
+        context: mockContext,
+        shellExecute,
+        mutate: mutateVia(alias),
+      }),
+      executeMutationThenRunSinglePath({
+        cwd: dir,
+        absolutePath: alias,
+        thenRun: { command: "echo via-alias" },
+        context: mockContext,
+        shellExecute,
+        mutate: mutateVia(original),
+      }),
+    ]);
+
+    const text = results.map((result) => textOf(result)).join("\n");
+    expect(shellExecute).toHaveBeenCalledTimes(2);
+    expect(text).not.toContain("[then_run:skipped]");
+    expect(text).toContain("[then_run:succeeded]");
   });
 });
