@@ -12,8 +12,12 @@ published only when they come from this pipeline, never from anecdotes).
   observation store per run is countable. Run inside a **throwaway clone** — the
   `neu` arm executes uncommitted code.
 - `measure.py` — metric extractor over `opencode run --format json` captures.
-  Emits round-trips, billed context (total / avg per round-trip / peak), tool
-  calls, completed `obs_recall` calls, verdict, and packed-object count.
+  Emits round-trips, billed context (total / avg per round-trip / peak /
+  last-4-step average), output tokens, tool calls, over-10-KiB tool results
+  (the pack-coverage denominator), completed `obs_recall` calls, verdict, and
+  packed-object count. `billed` is input + cache read/write and **excludes**
+  output: output is agent verbosity, and it is reported separately
+  (`output_tokens`) so it cannot move a projection-controlled headline metric.
 
 ## Method rules that make results citable
 
@@ -37,18 +41,29 @@ published only when they come from this pipeline, never from anecdotes).
    drained).
 7. **Quality side-checks on every audit batch**: verdict distribution, finding
    count, report size, and at least one read of both arms' final reports — a
-   token win that corrupts deliverables is not a win.
+   token win that corrupts deliverables is not a win. (`verdict` is populated
+   for review bundles only — audit prompts report `STATUS:` in their report
+   file, so use report size and finding count there.)
+8. **Exclude watchdog-truncated runs from totals.** A run killed at the timeout
+   cap is not a shorter run, it is an unfinished one: pair totals drawn from it
+   are not comparable and belong in the disclosures, not in a quoted range.
+   Peak and per-round-trip figures survive truncation better than totals.
 
 ## Reference runs behind the README numbers
 
-Original campaign (2026-10-12/13): one review bundle (PR-diff review, luna-class
-model) and a 5-area audit fan-out over a pinned OpenWrt repo, arms off /
-imperative-wording 0.1.0 / neutral-wording local build, across three model
-families (one paid-tier, two free-tier). 40+ measured runs; issue-tracker
-discussion #25/#26/#27 in this repo carries the per-wave tables, the
-consolidated wording-decision data, and the operational incidents (quota
-exhaustion, watchdog behavior). `ab-run.py`/`measure.py` are the generalized,
-committed form of that harness.
+Original campaign (2026-10-12/13): one review bundle (PR-diff review,
+`opencode-go/gpt-5.6-luna#high`) and a 5-area audit fan-out over a pinned OpenWrt
+repo, arms off / imperative-wording 0.1.0 / neutral-wording local build. The
+audit lanes were all free-tier (`opencode/mimo-v2.6-flash-free`,
+`opencode/nemotron-3.5-lightning-free`, `opencode/nemotron-3-ultra-free`, plus
+`opencode/muse-spark-1.3-contributor-free` on the plugin arm); the review bundle
+used a different, non-free lane. Treat "free-tier" as the lane label — provider
+pricing tiers were never checked against rate data (#25's B5 was not executed).
+40+ measured runs; issue-tracker discussion #25/#26/#27 in this repo carries the
+per-wave tables, the consolidated wording-decision data, and the operational
+incidents (quota exhaustion, watchdog behavior: three `mimo` pairs were killed at
+the 730 s cap and are excluded from the README's totals range).
+`ab-run.py`/`measure.py` are the generalized, committed form of that harness.
 
 ## Quick start
 

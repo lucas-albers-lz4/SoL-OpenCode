@@ -100,14 +100,21 @@ def main():
         env["XDG_DATA_HOME"] = str(data_home)
         t0 = time.time()
         ndjson = runs / f"{arm.strip()}.ndjson"
-        with open(ndjson, "wb") as f:
-            rc = subprocess.call(
-                ["opencode", "run", args.repo, prompt, "-m", args.model,
-                 "--format", "json", "--standalone", "--print-logs", "--auto",
-                 "--title", f"ab-{arm.strip()}-{int(t0)}"],
-                env=env, stdout=f,
-                stderr=open(runs / f"{arm.strip()}.err", "wb"),
-                timeout=args.timeout)
+        # A run that exceeds --timeout is recorded and skipped, not fatal: the remaining arms
+        # and the measurement step still run. The stream is what counts, not the runner's exit
+        # (see Notes above) — the same reason a nonzero rc is tolerated below.
+        with open(ndjson, "wb") as f, open(runs / f"{arm.strip()}.err", "wb") as err:
+            try:
+                rc = subprocess.call(
+                    ["opencode", "run", args.repo, prompt, "-m", args.model,
+                     "--format", "json", "--standalone", "--print-logs", "--auto",
+                     "--title", f"ab-{arm.strip()}-{int(t0)}"],
+                    env=env, stdout=f, stderr=err,
+                    timeout=args.timeout)
+            except subprocess.TimeoutExpired:
+                rc = f"timeout>{args.timeout}s"
+                print(f"{arm.strip()}: TIMEOUT after {args.timeout}s "
+                      f"(stream kept for measurement)", flush=True)
         wall = round(time.time() - t0)
         size = ndjson.stat().st_size
         results.append((arm.strip(), rc, wall, size))
