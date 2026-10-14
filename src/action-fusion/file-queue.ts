@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 
 const queueTails = new Map<string, Promise<void>>();
@@ -23,22 +23,46 @@ function isMissingPathError(error: unknown): boolean {
   );
 }
 
-async function canonicalQueueKey(filePath: string): Promise<string> {
-  const resolvedPath = resolve(filePath);
+/**
+ * Identify a file by its inode when it exists: `realpath` resolves symlinks, the ancestor
+ * walk covers missing files and `resolve` folds `./` prefixes, but none of them sees that
+ * two names are the same bytes through a hardlink. Two aliases sharing one inode must share
+ * one queue or two fused operations on the same bytes interleave.
+ *
+ * `ino === 0` means the platform did not report an inode (some Windows and FUSE mounts), so
+ * fall back to the path key rather than collapsing every file onto one queue.
+ */
+async function fileIdentity(resolvedPath: string): Promise<string | undefined> {
+  try {
+    const stats = await stat(resolvedPath);
+    if (stats.ino === 0) return undefined;
+    return `inode:${stats.dev}:${stats.ino}`;
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+    return undefined;
+  }
+}
+
+async function pathQueueKey(resolvedPath: string): Promise<string> {
   let current = resolvedPath;
   const missingSegments: string[] = [];
 
   while (true) {
     try {
-      return resolve(await realpath(current), ...missingSegments);
+      return `path:${resolve(await realpath(current), ...missingSegments)}`;
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
       const parent = dirname(current);
-      if (parent === current) return resolvedPath;
+      if (parent === current) return `path:${resolvedPath}`;
       missingSegments.unshift(basename(current));
       current = parent;
     }
   }
+}
+
+async function canonicalQueueKey(filePath: string): Promise<string> {
+  const resolvedPath = resolve(filePath);
+  return (await fileIdentity(resolvedPath)) ?? pathQueueKey(resolvedPath);
 }
 
 export async function withFusedFileQueue<T>(filePath: string, work: () => Promise<T>): Promise<T> {

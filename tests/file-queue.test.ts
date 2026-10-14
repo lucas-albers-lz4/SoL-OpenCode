@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { link, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -73,6 +73,67 @@ describe("withFusedFileQueues", () => {
       `${starters[1]}:start`,
       `${starters[1]}:end`,
     ]);
+  });
+
+  it("serializes hardlinked aliases of the same inode", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-hardlink-"));
+    const original = join(dir, "a.txt");
+    const linked = join(dir, "b.txt");
+    await writeFile(original, "shared bytes\n", "utf8");
+    await link(original, linked);
+
+    const events: string[] = [];
+    const work = (label: string, path: string, delayMs: number) =>
+      withFusedFileQueues([path], async () => {
+        events.push(`${label}:start`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        events.push(`${label}:end`);
+        return label;
+      });
+
+    // Two names, one inode: realpath cannot tell them apart from unrelated files.
+    await Promise.all([work("first", original, 20), work("second", linked, 20)]);
+
+    const starters = events
+      .filter((event) => event.endsWith(":start"))
+      .map((event) => event.slice(0, -":start".length));
+    expect(starters.slice().sort()).toEqual(["first", "second"]);
+    expect(events).toEqual([
+      `${starters[0]}:start`,
+      `${starters[0]}:end`,
+      `${starters[1]}:start`,
+      `${starters[1]}:end`,
+    ]);
+  });
+
+  it("does not collapse unrelated files onto one queue", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-unrelated-"));
+    const first = join(dir, "a.txt");
+    const second = join(dir, "b.txt");
+    await writeFile(first, "a\n", "utf8");
+    await writeFile(second, "b\n", "utf8");
+
+    const events: string[] = [];
+    const work = (label: string, path: string) =>
+      withFusedFileQueues([path], async () => {
+        events.push(`${label}:start`);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        events.push(`${label}:end`);
+        return label;
+      });
+
+    // Different inodes must still run concurrently, or the fix would serialize everything.
+    await Promise.all([work("first", first), work("second", second)]);
+
+    expect(events).toHaveLength(4);
+    expect(events.slice(0, 2).every((event) => event.endsWith(":start"))).toBe(true);
+    expect(events.slice(2).every((event) => event.endsWith(":end"))).toBe(true);
+    expect(
+      events
+        .slice(0, 2)
+        .map((event) => event.slice(0, -":start".length))
+        .sort(),
+    ).toEqual(["first", "second"]);
   });
 
   it("serializes work on a path that does not exist yet or any more", async () => {
