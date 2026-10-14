@@ -12,6 +12,12 @@ export interface ThenRunInput {
   readonly timeout?: number;
 }
 
+/** Reasons a present-but-unusable `then_run` reports through `[then_run:skipped]`. */
+export const THEN_RUN_INVALID_SHAPE = "then_run must be an object with a command.";
+export const THEN_RUN_INVALID_COMMAND = "then_run.command must be a non-empty string.";
+export const THEN_RUN_INVALID_TIMEOUT =
+  "then_run.timeout must be a positive, finite number of seconds.";
+
 type JsonObjectSchema = {
   readonly type: "object";
   readonly properties?: Record<string, unknown>;
@@ -38,6 +44,12 @@ function isEffectStruct(input: unknown): input is Schema.Struct<Schema.Struct.Fi
   );
 }
 
+/**
+ * `Schema.minLength` / `Schema.pattern` / `Schema.greaterThan` do not exist in effect
+ * 4.0.1; the checks below are the supported spellings. `minLength`/`pattern` mirror the
+ * JSON-Schema side, whose pattern is deliberately unanchored so any non-blank command
+ * passes.
+ */
 function thenRunProperty(description: string): Record<string, unknown> {
   return {
     type: "object",
@@ -45,10 +57,13 @@ function thenRunProperty(description: string): Record<string, unknown> {
     properties: {
       command: {
         type: "string",
+        minLength: 1,
+        pattern: "\\S",
         description: "Shell command to run after the mutation succeeds",
       },
       timeout: {
         type: "number",
+        exclusiveMinimum: 0,
         description: "Timeout in seconds (optional; converted to milliseconds for shell)",
       },
     },
@@ -59,13 +74,13 @@ function thenRunProperty(description: string): Record<string, unknown> {
 
 function thenRunEffectField(description: string) {
   const thenRun = Schema.Struct({
-    command: Schema.String.pipe(
+    command: Schema.String.check(Schema.isPattern(/\S/)).pipe(
       Schema.annotateKey({
         description: "Shell command to run after the mutation succeeds",
       }),
     ),
     timeout: Schema.optionalKey(
-      Schema.Number.pipe(
+      Schema.Number.check(Schema.isGreaterThan(0)).pipe(
         Schema.annotateKey({
           description: "Timeout in seconds (optional; converted to milliseconds for shell)",
         }),
@@ -112,37 +127,72 @@ export function extendToolInputWithThenRun(
   };
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A numeric string naming a positive, finite number of seconds is coerced; a number
+ * must already be positive and finite. Everything else is rejected, because a bound
+ * the caller asked for must never be silently dropped (the command would run
+ * unbounded). The schema checks alone cannot do this: `isGreaterThan(0)` still
+ * accepts `Infinity`, so this finite check is load-bearing.
+ */
+function coerceTimeoutSeconds(value: unknown): number | undefined {
+  const parsed = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+  if (typeof parsed !== "number" || !Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  return parsed;
+}
+
+/**
+ * Validate one `then_run` value. A malformed value is reported, never dropped: the
+ * caller applies the mutation and surfaces the reason as `[then_run:skipped]`.
+ */
+function parseThenRun(
+  value: unknown,
+): { readonly thenRun: ThenRunInput } | { readonly skipReason: string } {
+  if (!isPlainRecord(value)) {
+    return { skipReason: THEN_RUN_INVALID_SHAPE };
+  }
+  const command = value.command;
+  if (typeof command !== "string" || command.trim() === "") {
+    return { skipReason: THEN_RUN_INVALID_COMMAND };
+  }
+  if (value.timeout === undefined) {
+    return { thenRun: { command } };
+  }
+  const seconds = coerceTimeoutSeconds(value.timeout);
+  if (seconds === undefined) {
+    return { skipReason: THEN_RUN_INVALID_TIMEOUT };
+  }
+  return { thenRun: { command, timeout: seconds } };
+}
+
 export function stripThenRun<T extends Record<string, unknown>>(input: T): {
   readonly mutationInput: Omit<T, "then_run">;
   readonly thenRun: ThenRunInput | undefined;
+  /** Set when `then_run` was present but unusable; undefined when absent or usable. */
+  readonly skipReason: string | undefined;
 } {
   const { then_run: thenRunRaw, ...mutationInput } = input;
   if (thenRunRaw === undefined) {
-    return { mutationInput, thenRun: undefined };
+    return { mutationInput, thenRun: undefined, skipReason: undefined };
   }
-  if (
-    typeof thenRunRaw === "object" &&
-    thenRunRaw !== null &&
-    "command" in thenRunRaw &&
-    typeof (thenRunRaw as ThenRunInput).command === "string"
-  ) {
-    const candidate = thenRunRaw as ThenRunInput;
-    const timeout =
-      candidate.timeout === undefined
-        ? undefined
-        : typeof candidate.timeout === "number"
-          ? candidate.timeout
-          : undefined;
-    return {
-      mutationInput,
-      thenRun: { command: candidate.command, timeout },
-    };
+  const parsed = parseThenRun(thenRunRaw);
+  if ("thenRun" in parsed) {
+    return { mutationInput, thenRun: parsed.thenRun, skipReason: undefined };
   }
-  return { mutationInput, thenRun: undefined };
+  return { mutationInput, thenRun: undefined, skipReason: parsed.skipReason };
 }
 
 /** OpenCode shell timeout is milliseconds; schema exposes seconds (SoL-Pi wording). */
 export function thenRunTimeoutMs(thenRun: ThenRunInput | undefined): number | undefined {
-  if (thenRun?.timeout === undefined) return undefined;
-  return thenRun.timeout * 1000;
+  const seconds = thenRun?.timeout;
+  if (seconds === undefined) return undefined;
+  // Defensive second line of defence for direct callers: an unusable bound must not
+  // reach shell.execute as a timeout.
+  if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+  return seconds * 1000;
 }

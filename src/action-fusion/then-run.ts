@@ -103,7 +103,8 @@ export async function executeThenRun(
   shellExecute: ShellExecute,
 ): Promise<string> {
   if (thenRun.command.trim() === "") {
-    throw new Error(`${THEN_RUN_FAILED} empty command`);
+    // `thenRunFailedError` prepends the marker for this path; do not duplicate it.
+    throw new Error("empty command");
   }
 
   const timeoutMs = thenRunTimeoutMs(thenRun);

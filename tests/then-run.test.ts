@@ -210,4 +210,23 @@ describe("patch then_run fusion guard", () => {
     expect(textOf(result)).toContain("[then_run:succeeded]");
     expect(textOf(result)).not.toContain("[then_run:skipped]");
   });
+
+  it("reports a malformed then_run as a skip instead of plain success", async () => {
+    const shellExecute = vi.fn(async () => ({
+      content: "shell",
+      metadata: { exit: 0 },
+    })) as ShellExecute;
+    const mutate = vi.fn(async () => ({ content: "patched" }));
+    const harness = patchToolHarness({ cwd: "/tmp/project", shellExecute, mutate });
+
+    const result = await harness.execute({
+      patchText: "*** Begin Patch\n*** Update File: a.txt\n@@\n-one\n+two\n*** End Patch",
+      then_run: "echo hi",
+    });
+
+    expect(mutate).toHaveBeenCalled();
+    expect(shellExecute).not.toHaveBeenCalled();
+    expect(textOf(result)).toContain("[then_run:skipped]");
+    expect(textOf(result)).toContain("then_run must be an object");
+  });
 });
