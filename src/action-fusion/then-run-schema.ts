@@ -98,7 +98,8 @@ export function extendToolInputWithThenRun(
     return input;
   }
 
-  if (input.properties !== undefined && "then_run" in input.properties) {
+  const declared = input.properties;
+  if (typeof declared === "object" && declared !== null && Object.hasOwn(declared, "then_run")) {
     return input;
   }
 

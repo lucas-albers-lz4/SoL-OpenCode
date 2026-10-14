@@ -39,7 +39,7 @@ describe("extendToolInputWithThenRun Effect schemas", () => {
 });
 
 describe("extendToolInputWithThenRun JSON Schema", () => {
-  it("still clones object schemas and adds then_run", () => {
+  it("still copies object schemas and adds then_run", () => {
     const nested = { path: { type: "string" as const } };
     const input = { type: "object" as const, properties: nested };
     const extended = extendToolInputWithThenRun(input, "json path");
@@ -82,5 +82,32 @@ describe("extendToolInputWithThenRun JSON Schema", () => {
 
     const once = extendToolInputWithThenRun(input, "once");
     expect(extendToolInputWithThenRun(once, "twice")).toBe(once);
+  });
+
+  it("tolerates a null or non-object properties value", () => {
+    for (const properties of [null, "oops"]) {
+      const input = { type: "object" as const, properties } as unknown as Tool.ValueSchema;
+      const extended = extendToolInputWithThenRun(input, "fused") as unknown as {
+        properties: Record<string, unknown>;
+      };
+
+      expect(extended).toHaveProperty("properties.then_run");
+    }
+  });
+
+  it("keys off an own then_run property, not an inherited one", () => {
+    const inherited = Object.create({ then_run: { type: "string" } }) as Record<string, unknown>;
+    inherited.path = { type: "string" };
+    const input = {
+      type: "object" as const,
+      properties: inherited,
+    } as unknown as Tool.ValueSchema;
+
+    const extended = extendToolInputWithThenRun(input, "fused") as unknown as {
+      properties: Record<string, unknown>;
+    };
+
+    expect(extended).not.toBe(input);
+    expect(Object.hasOwn(extended.properties, "then_run")).toBe(true);
   });
 });
