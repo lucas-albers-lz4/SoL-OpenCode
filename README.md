@@ -82,7 +82,14 @@ absolute path inside `node_modules/sol-opencode` selects the local-directory cha
 | `actionFusion` | `true` | Wrap mutation tools with optional `then_run` |
 | `observationPack` | `true` | Archive large tool results and project placeholders on later provider requests |
 
-Invalid option values log a warning and disable that mechanism only; `setup` does not throw.
+Option handling is defensive. A value that is not `true`/`false` logs a warning and disables that
+mechanism only; an unrecognised key (a typo such as `actionfusion`) warns and leaves the other
+mechanism enabled; a non-object `options` value disables both. None of those cases throw.
+
+`setup` throws only when **no** mechanism could register at all. A mechanism whose host domain is
+missing (`ctx.tool`, `ctx.session`, `ctx.storage`, an absolute `ctx.location.directory`) warns and is
+skipped, and the other mechanism stays active. Disposal attempts every registration in reverse
+registration order, so one failing disposer cannot leave the rest registered.
 
 ## Provenance
 

@@ -54,13 +54,66 @@ function failOpen(reason: string, error: unknown): void {
   console.error(`[sol.opencode observation-pack] ${reason}: ${detail}`);
 }
 
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function registerObservationPack(
   ctx: Pick<Context, "tool" | "session" | "storage">,
 ): Promise<{ dispose: () => Promise<void> }> {
+  // Feature-check the domains this mechanism needs, so a host missing one fails with a
+  // named reason instead of a bare TypeError at the first dereference.
+  if (
+    ctx.tool === undefined ||
+    typeof ctx.tool.hook !== "function" ||
+    typeof ctx.tool.transform !== "function"
+  ) {
+    throw new Error("Observation Pack needs the tool host domain (ctx.tool.hook, ctx.tool.transform)");
+  }
+  if (ctx.session === undefined || typeof ctx.session.hook !== "function") {
+    throw new Error("Observation Pack needs the session host domain (ctx.session.hook)");
+  }
+  if (
+    ctx.storage === undefined ||
+    typeof ctx.storage.get !== "function" ||
+    typeof ctx.storage.set !== "function"
+  ) {
+    throw new Error("Observation Pack needs the storage host domain (ctx.storage.get, ctx.storage.set)");
+  }
+
   const disposers: Array<{ dispose: () => Promise<void> }> = [];
 
-  disposers.push(
-    await ctx.tool.hook("execute.after", async (event) => {
+  /**
+   * Register one part of the mechanism. A mechanism that fails half way through is work
+   * the host can never clean up — it never received a disposer for what already took
+   * effect — so unwind everything registered so far, in reverse order, then rethrow.
+   */
+  const addRegistration = async (
+    start: () => Promise<{ dispose: () => Promise<void> }>,
+  ): Promise<void> => {
+    try {
+      disposers.push(await start());
+    } catch (error) {
+      const unwindFailures: string[] = [];
+      for (const registration of [...disposers].reverse()) {
+        try {
+          await registration.dispose();
+        } catch (unwindError) {
+          unwindFailures.push(describeError(unwindError));
+        }
+      }
+      if (unwindFailures.length === 0) throw error;
+      // The registration failure is the diagnosis; a failure while cleaning up must not take
+      // its place in the only message the user sees.
+      throw new Error(
+        `${describeError(error)} (cleanup also failed: ${unwindFailures.join("; ")})`,
+        { cause: error },
+      );
+    }
+  };
+
+  await addRegistration(
+    () => ctx.tool.hook("execute.after", async (event) => {
       if (!isArchivableCompletedToolResult(event)) return;
 
       try {
@@ -96,8 +149,8 @@ export async function registerObservationPack(
     }),
   );
 
-  disposers.push(
-    await ctx.session.hook("http.request", async (event) => {
+  await addRegistration(
+    () => ctx.session.hook("http.request", async (event) => {
       try {
         await withSessionIndexLock(event.sessionID, async () => {
           const entries = await loadSessionIndex(ctx.storage, event.sessionID);
@@ -168,8 +221,8 @@ export async function registerObservationPack(
     }),
   );
 
-  disposers.push(
-    await ctx.tool.transform((editor) => {
+  await addRegistration(
+    () => ctx.tool.transform((editor) => {
       editor.add({
         name: OBS_RECALL_TOOL,
         options: { codemode: false },
@@ -240,8 +293,18 @@ export async function registerObservationPack(
 
   return {
     async dispose() {
-      for (const registration of disposers) {
-        await registration.dispose();
+      // Reverse registration order: the last thing registered is the first to go. Every
+      // registration is attempted, so one throwing disposer cannot leave the rest live.
+      const failures: string[] = [];
+      for (const registration of [...disposers].reverse()) {
+        try {
+          await registration.dispose();
+        } catch (error) {
+          failures.push(describeError(error));
+        }
+      }
+      if (failures.length > 0) {
+        throw new Error(`Observation Pack disposal failed (${failures.join("; ")})`);
       }
     },
   };
