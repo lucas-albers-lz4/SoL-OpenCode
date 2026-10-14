@@ -191,7 +191,13 @@ export async function registerObservationPack(
           if (typeof params.id !== "string" || !isObservationId(params.id)) {
             throw new Error(`Unknown observation id: ${String(params.id)}`);
           }
-          const offset = typeof params.offset === "number" ? params.offset : 0;
+          // A present offset must be a number: answering a mis-positioned request from the start
+          // of the object hides the caller's mistake behind a plausible-looking header.
+          const offset = params.offset === undefined ? 0 : params.offset;
+          if (typeof offset !== "number") {
+            const rendered = JSON.stringify(params.offset) ?? String(params.offset);
+            throw new Error(`Offset ${rendered} must be an integer >= 0`);
+          }
 
           const sessionEntries = await loadSessionIndex(ctx.storage, context.sessionID);
           if (!sessionEntries.some((entry) => entry.obsId === params.id)) {
