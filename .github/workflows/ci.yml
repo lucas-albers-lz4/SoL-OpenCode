@@ -1,0 +1,33 @@
+name: CI
+
+# Pre-merge verification. The publish workflow (publish.yml) validates too, but it
+# only runs on a version tag — a broken main would otherwise be discovered when
+# someone tags a release.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22 is the declared floor in package.json `engines`; 24 is what the
+        # publish job uses (npm >= 11.5.1 for trusted publishing).
+        node-version: ["22", "24"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node-version }}
+        # No cache input: cache=false is the default and v5 has no
+        # package-manager-cache input (same choice as publish.yml).
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
