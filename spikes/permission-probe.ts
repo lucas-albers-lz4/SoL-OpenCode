@@ -3,8 +3,10 @@
  * SPDX-License-Identifier: MIT
  *
  * Throwaway live probe for fused-shell permission on OpenCode 2.0.27.
- * Do not ship. Load beside sol.opencode:
- *   { "plugins": ["./spikes/permission-probe.ts"] }
+ * Do not ship. Load beside sol.opencode in the directory form: V2 2.0.27 will not
+ * load a direct .ts plugin path — an absolute one is rejected with "configured
+ * plugin path must be a directory", a relative one fails silently:
+ *   { "plugins": ["./spikes/live/plugins/permission-probe"] }
  *
  * In a session, ask the model to call `sol_permission_probe`.
  * Expect a native shell permission prompt for:
