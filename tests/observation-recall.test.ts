@@ -77,6 +77,51 @@ describe("readRecallChunk offsets", () => {
     expect(chunk.eof).toBe(true);
   });
 
+  it("snaps forward across a four-byte character", async () => {
+    // "a😀b\n": byte 0 is "a", bytes 1-4 are the astral character, byte 5 is "b". Offset 1
+    // is its lead byte, so only the continuation bytes 2-4 may move the start forward.
+    const path = await fixture("a😀b\n");
+
+    const atLeadByte = await readRecallChunk(path, 1, { maxBytes: 4096, maxLines: 10 });
+    expect(atLeadByte.startOffset).toBe(1);
+    expect(atLeadByte.text).toBe("😀b\n");
+
+    for (const offset of [2, 3, 4]) {
+      const chunk = await readRecallChunk(path, offset, { maxBytes: 4096, maxLines: 10 });
+
+      expect(chunk.startOffset).toBe(5);
+      expect(chunk.text).toBe("b\n");
+      expect(chunk.text).not.toContain("\uFFFD");
+    }
+  });
+
+  it("trims the tail instead of splitting a character when maxBytes binds", async () => {
+    // 3-byte characters and a byte budget that cannot land on a boundary: 33 fit, the 34th
+    // is cut in half and must be dropped rather than decoded as mojibake.
+    const content = "€".repeat(4000);
+    const path = await fixture(content);
+
+    const chunk = await readRecallChunk(path, 0, { maxBytes: 100, maxLines: 1000 });
+
+    expect(chunk.text).not.toContain("\uFFFD");
+    expect(content.startsWith(chunk.text)).toBe(true);
+    expect(chunk.text.length % 3).toBe(0);
+
+    const next = await readRecallChunk(path, chunk.nextOffset, { maxBytes: 100, maxLines: 1000 });
+    expect(content.startsWith(chunk.text + next.text)).toBe(true);
+  });
+
+  it("walks a byte-bounded multibyte fixture without emitting a replacement character", async () => {
+    const line = `${"é".repeat(39)}\n`; // 79 bytes: an odd budget cuts inside the next line
+    const content = line.repeat(200);
+    const path = await fixture(content);
+
+    const { text, chunks } = await walk(path, { maxBytes: 100, maxLines: 7 });
+
+    expect(text).toBe(content);
+    expect(chunks).toBeGreaterThan(10);
+  });
+
   it("walks a line-bounded fixture so the concatenated chunks are byte-identical", async () => {
     const content = "line one\nline two\nline three\nline four\n";
     const path = await fixture(content);
