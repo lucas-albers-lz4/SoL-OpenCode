@@ -5,9 +5,10 @@
 
 import { link, mkdtemp, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  resolveMutationPath,
   withFusedFileQueue,
   withFusedFileQueues,
 } from "../src/action-fusion/file-queue.js";
@@ -263,6 +264,32 @@ describe("withFusedFileQueues", () => {
 
     await Promise.all([holder, late]);
     expect(peak).toBe(1);
+  });
+});
+
+describe("resolveMutationPath", () => {
+  it("applies the drive spelling the host normalizes before a key is derived", () => {
+    // The host converts the drive spellings a shell hands it before it resolves a path
+    // (`@opencode/util` `FSUtil.windowsPath`, `win32` only). The queue must address the file
+    // the mutation writes: otherwise `/c/src/app.ts` and `C:/src/app.ts` name one file and
+    // hold two queue keys, which lets two fused operations interleave (issue #61).
+    const original = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      const fromShellSpelling = resolveMutationPath("C:\\work", "/c/src/app.ts");
+      const fromNativeSpelling = resolveMutationPath("C:\\work", "C:/src/app.ts");
+
+      expect(fromShellSpelling).toBe(fromNativeSpelling);
+      // Without the host's conversion, the two spellings resolve to different paths.
+      expect(resolve("C:\\work", "/c/src/app.ts")).not.toBe(fromNativeSpelling);
+    } finally {
+      if (original) Object.defineProperty(process, "platform", original);
+    }
+  });
+
+  it("leaves a non-Windows path as the plain resolution", () => {
+    // Off Windows the host conversion is a no-op, so this must not change the workspace path.
+    expect(resolveMutationPath("/workspace", "src/a.ts")).toBe(resolve("/workspace", "src/a.ts"));
   });
 });
 
