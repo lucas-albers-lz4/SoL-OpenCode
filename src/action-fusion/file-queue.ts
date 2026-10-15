@@ -4,10 +4,13 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { realpath, stat } from "node:fs/promises";
+import { lstat, readlink, realpath, stat } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 
 const queueTails = new Map<string, Promise<void>>();
+
+/** Bound on followed symlinks, so a link cycle cannot loop the key derivation. */
+const MAX_LINK_DEPTH = 32;
 
 /** OpenCode mutation tools use `path` relative to the workspace directory (no Pi `@` / `file://` resolver). */
 export function resolveMutationPath(cwd: string, path: string): string {
@@ -24,13 +27,25 @@ function isMissingPathError(error: unknown): boolean {
 }
 
 /**
+ * A name the filesystem cannot resolve at all: it is absent, or it is a symlink cycle
+ * (`ELOOP`). Both fall back to the name-based key, so key derivation never turns a
+ * broken workspace path into a plugin error before the host tool reports its own.
+ */
+function isUnresolvablePathError(error: unknown): boolean {
+  return (
+    isMissingPathError(error) ||
+    (typeof error === "object" && error !== null && "code" in error && error.code === "ELOOP")
+  );
+}
+
+/**
  * Identify a file by its inode: `realpath` resolves a symlink whose target exists, and the
  * ancestor walk covers missing files, but neither sees that two names are the same bytes
  * through a hardlink. Two aliases sharing one inode must share one queue or two fused
  * operations on the same bytes interleave.
  *
- * Not covered: a dangling symlink, whose target does not exist yet, keeps its own path key
- * because `realpath` and `stat` both fail on it (see #56).
+ * Not covered: a dangling symlink is handled by the link-chain walk in `queueKeysFor`,
+ * which keys the link name and its resolved target name together (issue #56).
  *
  * `ino === 0` means the platform did not report an inode (some Windows and FUSE mounts), so
  * the file keeps its path key rather than collapsing every file onto one queue.
@@ -48,7 +63,7 @@ async function pathQueueKey(resolvedPath: string): Promise<string> {
     try {
       return `path:${resolve(await realpath(current), ...missingSegments)}`;
     } catch (error) {
-      if (!isMissingPathError(error)) throw error;
+      if (!isUnresolvablePathError(error)) throw error;
       const parent = dirname(current);
       if (parent === current) return `path:${resolvedPath}`;
       missingSegments.unshift(basename(current));
@@ -58,10 +73,55 @@ async function pathQueueKey(resolvedPath: string): Promise<string> {
 }
 
 /**
+ * Every name one operation can reach through symlinks, starting at `resolvedPath`.
+ *
+ * `realpath` cannot resolve a link whose target does not exist yet, so a dangling link
+ * and its missing target would otherwise hold disjoint queue keys and two fused
+ * operations through them would interleave (issue #56). `lstat` sees the link itself and
+ * `readlink` gives its target, so the chain is walked by hand: relative targets resolve
+ * against the link's directory, and the walk stops at the first non-link, at a repeated
+ * name, or at the depth bound.
+ */
+async function linkChain(resolvedPath: string): Promise<string[]> {
+  const chain: string[] = [resolvedPath];
+  const seen = new Set<string>([resolvedPath]);
+  let current = resolvedPath;
+
+  for (let depth = 0; depth < MAX_LINK_DEPTH; depth += 1) {
+    let isLink = false;
+    try {
+      isLink = (await lstat(current)).isSymbolicLink();
+    } catch (error) {
+      if (!isUnresolvablePathError(error)) throw error;
+      return chain;
+    }
+    if (!isLink) return chain;
+
+    let target: string;
+    try {
+      target = await readlink(current);
+    } catch (error) {
+      if (!isUnresolvablePathError(error)) throw error;
+      return chain;
+    }
+
+    current = resolve(dirname(current), target);
+    if (seen.has(current)) return chain;
+    seen.add(current);
+    chain.push(current);
+  }
+
+  return chain;
+}
+
+/**
  * Every key that must be held to own a path: the path key always, plus the inode key when the
  * file exists. Retaining the path key keeps the exclusion alive for the locked *name* across a
  * section that renames or deletes it — an inode key alone stops matching the moment the name is
  * gone, which would let a later operation start inside the critical section.
+ *
+ * A path that is a symlink contributes a key for the link name and for the resolved target
+ * name, so a fused section on either name excludes the other.
  *
  * Keys are derived when an operation is enqueued, so an alias that appears while a section is
  * already running contributes no inode key and is not covered by it.
@@ -70,18 +130,21 @@ async function pathQueueKey(resolvedPath: string): Promise<string> {
  */
 async function queueKeysFor(filePath: string): Promise<string[]> {
   const resolvedPath = resolve(filePath);
-  const pathKey = await pathQueueKey(resolvedPath);
+  const pathKeys = new Set<string>();
+  for (const name of await linkChain(resolvedPath)) {
+    pathKeys.add(await pathQueueKey(name));
+  }
 
   let stats: { dev: number; ino: number };
   try {
     stats = await stat(resolvedPath);
   } catch (error) {
-    if (!isMissingPathError(error)) throw error;
-    return [pathKey];
+    if (!isUnresolvablePathError(error)) throw error;
+    return [...pathKeys];
   }
 
   const inodeKey = inodeQueueKey(stats);
-  return inodeKey === undefined ? [pathKey] : [pathKey, inodeKey];
+  return inodeKey === undefined ? [...pathKeys] : [...pathKeys, inodeKey];
 }
 
 async function withQueueKey<T>(key: string, work: () => Promise<T>): Promise<T> {

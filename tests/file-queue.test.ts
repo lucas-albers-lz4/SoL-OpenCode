@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { link, mkdtemp, rename, writeFile } from "node:fs/promises";
+import { link, mkdtemp, rename, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -263,6 +263,77 @@ describe("withFusedFileQueues", () => {
 
     await Promise.all([holder, late]);
     expect(peak).toBe(1);
+  });
+});
+
+describe("symlink queue keys", () => {
+  /** 1 means one shared queue; 2 means the two names could interleave. */
+  async function peakConcurrency(paths: readonly string[]): Promise<number> {
+    let concurrent = 0;
+    let peak = 0;
+    const section = async () => {
+      concurrent += 1;
+      peak = Math.max(peak, concurrent);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      concurrent -= 1;
+    };
+
+    await Promise.all(paths.map((path) => withFusedFileQueue(path, section)));
+    return peak;
+  }
+
+  it("shares one queue between a dangling symlink and its missing target", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-dangling-"));
+    const target = join(dir, "target.txt");
+    const dangling = join(dir, "link.txt");
+    // The target does not exist yet: a fused section through the link creates it, so the
+    // two names must exclude each other (issue #56).
+    await symlink(target, dangling);
+
+    expect(await peakConcurrency([dangling, target])).toBe(1);
+  });
+
+  it("shares one queue across a chain of dangling symlinks", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-chain-"));
+    const target = join(dir, "target.txt");
+    const second = join(dir, "second.txt");
+    const first = join(dir, "first.txt");
+    await symlink(target, second);
+    await symlink(second, first);
+
+    expect(await peakConcurrency([first, target])).toBe(1);
+  });
+
+  it("keeps the existing-target behavior for a resolvable symlink", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-resolvable-"));
+    const target = join(dir, "target.txt");
+    const linkPath = join(dir, "link.txt");
+    await writeFile(target, "x\n", "utf8");
+    await symlink(target, linkPath);
+
+    expect(await peakConcurrency([linkPath, target])).toBe(1);
+  });
+
+  it("does not hang on a symlink cycle and still shares the queue", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-cycle-"));
+    const first = join(dir, "a.txt");
+    const second = join(dir, "b.txt");
+    await symlink(second, first);
+    await symlink(first, second);
+
+    expect(await peakConcurrency([first, second])).toBe(1);
+  });
+
+  it("does not collapse unrelated dangling symlinks onto one queue", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-unrelated-links-"));
+    const firstTarget = join(dir, "one.txt");
+    const secondTarget = join(dir, "two.txt");
+    const firstLink = join(dir, "link-one.txt");
+    const secondLink = join(dir, "link-two.txt");
+    await symlink(firstTarget, firstLink);
+    await symlink(secondTarget, secondLink);
+
+    expect(await peakConcurrency([firstLink, secondLink])).toBe(2);
   });
 });
 
