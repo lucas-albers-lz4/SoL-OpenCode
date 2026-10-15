@@ -297,5 +297,21 @@ describe("resolveMutationPath", () => {
       resolve("/workspace", "/c/src/app.ts"),
     );
   });
+
+  it("keeps upstream's Pi-only path rules dropped", () => {
+    // The fork review proposed restoring upstream's `normalizeToolPath`, which strips a leading
+    // `@`, expands `~`, resolves `file://`, and folds Unicode spaces. `@opencode/util` does none of
+    // those, and `docs/upstream-fork-register.md` records each as a deliberate non-port: a queue
+    // key must name the file the operation names. Reintroducing any of the four fails here.
+    for (const named of [
+      "~/src/a.ts",
+      "@src/a.ts",
+      "file:///src/a.ts",
+      "src/a\u00A0b.ts",
+      "src/a\u202Fb.ts",
+    ]) {
+      expect(resolveMutationPath("/workspace", named)).toBe(resolve("/workspace", named));
+    }
+  });
 });
 
