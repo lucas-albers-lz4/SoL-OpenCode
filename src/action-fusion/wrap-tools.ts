@@ -14,7 +14,12 @@ import {
   executeMutationThenRunSinglePath,
   type ShellExecute,
 } from "./then-run.js";
-import { extendToolInputWithThenRun, stripThenRun } from "./then-run-schema.js";
+import {
+  declaresThenRunProperty,
+  extendToolInputWithThenRun,
+  stripThenRun,
+  supportsThenRunProperty,
+} from "./then-run-schema.js";
 
 const MUTATION_TOOL_IDS = ["edit", "write", "patch"] as const;
 
@@ -25,7 +30,12 @@ const WRITE_THEN_RUN_DESCRIPTION =
 const PATCH_THEN_RUN_DESCRIPTION =
   "Command to run after the patch succeeds on all written paths; optional timeout in seconds. Omitted from schema when patch paths cannot be enumerated.";
 
-const THEN_RUN_DESCRIPTION: Record<(typeof MUTATION_TOOL_IDS)[number], string> = {
+/**
+ * The `then_run` property description for each mutation tool. Model-visible on every
+ * provider request: `tests/schema-cost.test.ts` measures the shipped text and pins the
+ * resulting byte cost, so a change here is a decision recorded in docs/quality-guard.md.
+ */
+export const THEN_RUN_DESCRIPTION: Record<(typeof MUTATION_TOOL_IDS)[number], string> = {
   edit: EDIT_THEN_RUN_DESCRIPTION,
   write: WRITE_THEN_RUN_DESCRIPTION,
   patch: PATCH_THEN_RUN_DESCRIPTION,
@@ -64,7 +74,23 @@ function wrapToolExecute(
 ): void {
   const currentExecute = tool.execute;
 
+  // A tool whose own schema declares `then_run` owns that property. Read the declaration
+  // before the transform, because the transform must then leave the schema alone, and
+  // install a pass-through instead of the fusion wrapper (issue #48). Otherwise the
+  // advertised value is stripped, a false skip notice is appended to the tool's own
+  // result, and a value shaped like fusion input would run as a shell command.
+  //
+  // A schema family the plugin cannot read is a deferral too: `then_run` was never
+  // advertised for such a tool, so any value in its input belongs to the host.
+  const defersToHost =
+    declaresThenRunProperty(tool.input) || !supportsThenRunProperty(tool.input);
+
   tool.input = inputWithOptionalThenRun(toolId, tool.input, config);
+
+  if (defersToHost) {
+    tool.execute = async (input: unknown, context: ToolContext) => currentExecute(input, context);
+    return;
+  }
 
   tool.execute = async (input: unknown, context: ToolContext) => {
     const { mutationInput, thenRun, skipReason } = stripThenRun(

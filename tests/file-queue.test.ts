@@ -5,9 +5,10 @@
 
 import { mkdir, link, mkdtemp, realpath, rename, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  resolveMutationPath,
   withFusedFileQueue,
   withFusedFileQueues,
 } from "../src/action-fusion/file-queue.js";
@@ -457,3 +458,51 @@ describe("symlink queue keys", () => {
     expect(await peakConcurrency([firstLink, secondLink])).toBe(2);
   });
 });
+describe("resolveMutationPath", () => {
+  it("applies the drive spelling the host normalizes before a key is derived", () => {
+    // The host converts the drive spellings a shell hands it before it resolves a path
+    // (`@opencode/util` `FSUtil.windowsPath`, `win32` only). The queue must address the file
+    // the mutation writes: otherwise `/c/src/app.ts` and `C:/src/app.ts` name one file and
+    // hold two queue keys, which lets two fused operations interleave (issue #61).
+    const original = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      const fromShellSpelling = resolveMutationPath("C:\\work", "/c/src/app.ts");
+      const fromNativeSpelling = resolveMutationPath("C:\\work", "C:/src/app.ts");
+
+      expect(fromShellSpelling).toBe(fromNativeSpelling);
+      // Without the host's conversion, the two spellings resolve to different paths.
+      expect(resolve("C:\\work", "/c/src/app.ts")).not.toBe(fromNativeSpelling);
+    } finally {
+      if (original) Object.defineProperty(process, "platform", original);
+    }
+  });
+
+  it("leaves a non-Windows path as the plain resolution", () => {
+    // Off Windows the host conversion is a no-op, so neither an ordinary path nor a drive-spelled
+    // one changes. The drive-spelled case is the discriminating one: it fails if the host's
+    // conversion is ever reimplemented inline without its `win32` gate, because then this host
+    // rewrites `/c/src/app.ts` to `C:/src/app.ts` and keys a path the workspace does not contain.
+    expect(resolveMutationPath("/workspace", "src/a.ts")).toBe(resolve("/workspace", "src/a.ts"));
+    expect(resolveMutationPath("/workspace", "/c/src/app.ts")).toBe(
+      resolve("/workspace", "/c/src/app.ts"),
+    );
+  });
+
+  it("keeps upstream's Pi-only path rules dropped", () => {
+    // The fork review proposed restoring upstream's `normalizeToolPath`, which strips a leading
+    // `@`, expands `~`, resolves `file://`, and folds Unicode spaces. `@opencode/util` does none of
+    // those, and `docs/upstream-fork-register.md` records each as a deliberate non-port: a queue
+    // key must name the file the operation names. Reintroducing any of the four fails here.
+    for (const named of [
+      "~/src/a.ts",
+      "@src/a.ts",
+      "file:///src/a.ts",
+      "src/a\u00A0b.ts",
+      "src/a\u202Fb.ts",
+    ]) {
+      expect(resolveMutationPath("/workspace", named)).toBe(resolve("/workspace", named));
+    }
+  });
+});
+

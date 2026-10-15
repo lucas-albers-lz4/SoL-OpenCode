@@ -201,11 +201,33 @@ export function placeholderFor(observation: Observation): string {
   ].join("\n");
 }
 
+/**
+ * One page of a stored observation.
+ *
+ * Offsets are bytes and `maxBytes` bounds a page. `startOffset` is snapped forward to the
+ * first byte that can begin a character, and the page ends at the last character boundary
+ * inside the window, so a page never splits a character that is complete in the file.
+ *
+ * Two shapes follow from paging by bytes:
+ * - When no character fits the window, `text` is empty and `nextOffset` equals `startOffset`.
+ *   **Do not loop on `nextOffset` in that shape** — it does not advance. Raise `maxBytes` instead.
+ *   A character wider than `maxBytes` produces this shape, and so does a run of `maxBytes` or more
+ *   continuation bytes at the offset. `eof` is false while bytes remain after the empty page, and
+ *   true when the snap reached the end of the file. The shipped caller passes 15,872 bytes
+ *   (`RECALL_LIMITS`), so well-formed UTF-8 cannot reach it.
+ * - Bytes that are not valid UTF-8 decode with replacement characters (U+FFFD). An object truncated
+ *   inside a character ends that way, and the call still returns the page. A stored object is
+ *   written from a JavaScript string, so this shape means the object is damaged.
+ *
+ * Upstream SoL-Pi pages by byte offset the same way and trims the end with the same walk-back, and
+ * it promises nothing further about either shape. The start snap is this port's own: upstream starts
+ * at the offset it is given, and can therefore begin inside a character.
+ */
 export interface RecallChunk {
   readonly text: string;
   readonly bytes: number;
   readonly lines: number;
-  /** Byte offset this chunk actually starts at — always a character boundary. */
+  /** Byte offset this page starts at: a character boundary for every object the store writes. */
   readonly startOffset: number;
   readonly nextOffset: number;
   readonly eof: boolean;
@@ -218,10 +240,14 @@ function trimUtf8End(buffer: Buffer, limit: number): number {
 }
 
 /**
- * Snap a requested offset forward to the next UTF-8 lead byte (or ASCII byte), so a
- * chunk never begins inside a multi-byte character and decode as U+FFFD. Returns
- * `size` when nothing but continuation bytes remain, which yields an empty chunk
- * rather than mojibake.
+ * Snap a requested offset forward to the next UTF-8 lead byte (or ASCII byte), so a page does not
+ * begin inside a multi-byte character: a page that starts inside one decodes as U+FFFD.
+ *
+ * This function reads only the bytes around the start. It does not validate the rest of the page,
+ * so a damaged object can still carry a replacement character later in its text.
+ *
+ * Returns `size` when nothing but continuation bytes remain, which yields an empty page rather
+ * than a partial character.
  */
 async function utf8AlignedOffset(
   handle: FileHandle,
