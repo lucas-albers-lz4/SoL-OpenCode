@@ -269,18 +269,42 @@ describe("withFusedFileQueues", () => {
 describe("symlink queue keys", () => {
   /** 1 means one shared queue; 2 means the two names could interleave. */
   async function peakConcurrency(paths: readonly string[]): Promise<number> {
+    // Warm the key derivation, then hold long enough to overlap two acquisitions. If a section
+    // ends before the next one's keys are derived, a disjoint pair also measures 1, and every
+    // fixture below would pass without testing the queue at all. The control fixture asserts 2.
+    for (const path of paths) await withFusedFileQueue(path, async () => {});
+
     let concurrent = 0;
     let peak = 0;
     const section = async () => {
       concurrent += 1;
       peak = Math.max(peak, concurrent);
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      await new Promise((resolve) => setTimeout(resolve, 100));
       concurrent -= 1;
     };
 
     await Promise.all(paths.map((path) => withFusedFileQueue(path, section)));
     return peak;
   }
+
+  it("measures two disjoint names as two sections, so a peak of 1 means one queue", async () => {
+    // Positive control for every fixture below: they assert a peak of 1, which a timing regime
+    // that cannot reach 2 would also report for disjoint queues. This pair derives keys the
+    // expensive way — an 80-link chain, well past the walk's 64-hop bound — and is disjoint by
+    // construction: the walk from the head stops at the bound, so it never reaches the target.
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-control-"));
+    const target = join(dir, "target.txt");
+    let previous = target;
+    let head = target;
+    for (let link = 0; link < 80; link += 1) {
+      const next = join(dir, `link-${String(link)}.txt`);
+      await symlink(previous, next);
+      previous = next;
+      head = next;
+    }
+
+    expect(await peakConcurrency([head, target])).toBe(2);
+  });
 
   it("shares one queue between a dangling symlink and its missing target", async () => {
     const dir = await mkdtemp(join(tmpdir(), "fused-queue-dangling-"));

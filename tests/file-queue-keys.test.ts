@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { mkdtemp, readlink, realpath, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readlink, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,15 +11,22 @@ import { withFusedFileQueue } from "../src/action-fusion/file-queue.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, stat: vi.fn(actual.stat), readlink: vi.fn(actual.readlink) };
+  return {
+    ...actual,
+    lstat: vi.fn(actual.lstat),
+    stat: vi.fn(actual.stat),
+    readlink: vi.fn(actual.readlink),
+  };
 });
 
+const mockedLstat = vi.mocked(lstat);
 const mockedStat = vi.mocked(stat);
 const mockedReadlink = vi.mocked(readlink);
 
 type StatResult = Awaited<ReturnType<typeof stat>>;
 
 afterEach(() => {
+  mockedLstat.mockReset();
   mockedStat.mockReset();
   mockedReadlink.mockReset();
 });
@@ -93,5 +100,22 @@ describe("queue keys from unusual stat results", () => {
     mockedReadlink.mockRejectedValue(Object.assign(new Error("invalid argument"), { code: "EINVAL" }));
 
     await expect(withFusedFileQueue(linkPath, async () => "ran")).resolves.toBe("ran");
+  });
+
+  it("stops a cycle at two lstat calls instead of the depth bound", async () => {
+    // The `seen` short-circuit is a cost guard: the depth bound alone also ends a cycle, at 64
+    // hops. No other test would notice its removal, so pin the cost: 2 `lstat` calls here, 64
+    // without the short-circuit.
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-cycle-cost-"));
+    const first = join(dir, "first.txt");
+    const second = join(dir, "second.txt");
+    await symlink(second, first);
+    await symlink(first, second);
+
+    mockedLstat.mockClear();
+    await withFusedFileQueue(first, async () => "ran");
+    const calls = mockedLstat.mock.calls.filter(([name]) => String(name).startsWith(dir)).length;
+
+    expect(calls).toBeLessThanOrEqual(4);
   });
 });
