@@ -201,6 +201,23 @@ export function placeholderFor(observation: Observation): string {
   ].join("\n");
 }
 
+/**
+ * One page of a stored observation.
+ *
+ * Offsets are bytes and `maxBytes` bounds a page. `startOffset` is snapped forward to the
+ * first byte that can begin a character, and the page ends at the last character boundary
+ * inside the window, so a page never splits a character that is complete in the file.
+ *
+ * Two shapes follow from paging by bytes. Both match upstream SoL-Pi:
+ * - When the character at `startOffset` is wider than `maxBytes`, no page can hold it:
+ *   `text` is empty, `nextOffset` equals `startOffset`, and `eof` stays false. **Do not
+ *   loop on `nextOffset` in that shape** — it does not advance. Raise `maxBytes` instead.
+ *   The shipped caller passes 15,872 bytes (`RECALL_LIMITS`), so the shape is unreachable
+ *   in normal use.
+ * - Bytes that are not valid UTF-8 — an object truncated inside a character — decode with
+ *   replacement characters (U+FFFD). A stored object is written from a JavaScript string,
+ *   so this shape means the object is damaged; the call still returns the page.
+ */
 export interface RecallChunk {
   readonly text: string;
   readonly bytes: number;

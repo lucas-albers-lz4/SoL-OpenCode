@@ -142,4 +142,32 @@ describe("readRecallChunk offsets", () => {
     expect(text).toBe(content);
     expect(chunks).toBeGreaterThan(10);
   });
+
+  it("returns an empty page when the cap cannot hold the character at the offset", async () => {
+    // Paging is by bytes, as upstream SoL-Pi pages. A cap smaller than the character at the
+    // offset cannot hold a page, so the page is empty and the cursor does not advance. The
+    // shipped caller passes 15,872 bytes, which makes this unreachable in normal use: the
+    // test pins it so that a change to it is a decision, and the interface comment names it
+    // as the shape a caller must not loop on.
+    const path = await fixture("😀😀😀");
+
+    const chunk = await readRecallChunk(path, 0, { maxBytes: 3, maxLines: 10 });
+
+    expect(chunk).toMatchObject({ text: "", bytes: 0, startOffset: 0, nextOffset: 0, eof: false });
+  });
+
+  it("decodes a damaged tail with a replacement character", async () => {
+    // An object truncated inside a character is damage, and its bytes still decode: the
+    // page carries a replacement character, exactly as upstream decodes it. A stored
+    // object is written from a JavaScript string, so this shape cannot come from the store.
+    const dir = await mkdtemp(join(tmpdir(), "obs-recall-damaged-tail-"));
+    const path = join(dir, "object.bin");
+    await writeFile(path, Buffer.from([0x61, 0x62, 0xf0, 0x9f, 0x92]));
+
+    const chunk = await readRecallChunk(path, 0, { maxBytes: 15872, maxLines: 398 });
+
+    expect(chunk.text).toBe("ab\uFFFD");
+    expect(chunk.bytes).toBe(5);
+    expect(chunk.eof).toBe(true);
+  });
 });
