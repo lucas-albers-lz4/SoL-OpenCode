@@ -40,7 +40,7 @@ Upstream extensions with no port: `evidence-preserving-reducer`, `online-context
 |---|---|---|---|
 | Hardlink aliasing (#36) | `canonicalQueueKey` keys the canonical path only, so two hardlinked names interleave | inode key added | merged |
 | Dangling-symlink aliasing (#56) | the `ENOENT` ancestor walk gives the link and its missing target disjoint keys | link-chain keys | in review (#58) |
-| `ELOOP`, or any other unresolvable name, out of key derivation (#56) | `canonicalQueueKey` throws for a cyclic link; a fused `write` reaches it through `executeMutationThenRunSinglePath` | falls back to the name key | in review (#58) |
+| `ELOOP`, or any other unresolvable name, out of key derivation (decided in #58's review, part of #56's change) | `canonicalQueueKey` throws for a cyclic link; a fused `write` reaches it through `executeMutationThenRunSinglePath` | falls back to the name key | in review (#58) |
 
 On the default branch today, a dangling symlink keeps its own path key (`src/action-fusion/file-queue.ts`
 says so), and a cyclic link makes the queue throw. Both change in #58.
@@ -57,8 +57,9 @@ character-alignment or U+FFFD promise either, so the promise in this port's comm
 | Deviation | Reason | Status |
 |---|---|---|
 | Recall start-snap and offset validation (#34) | A page never starts inside a character, and a start inside one would decode as a replacement character. | merged |
-| Fusion runs for `patch` (#30) | Upstream drops fusion for `patch`, because it cannot enumerate written paths. This port enumerates them with `Patch.parse`. A deliberate product divergence. | merged |
-| A malformed `then_run` is rejected visibly (#31, #35) | Upstream reserves `then_run` for itself and hands a value it did not shape straight to the shell, so nothing rejects it in the model's view. The plugin adds the property to a schema the host owns, the host validates nothing there, so the rejection has to be visible in the port. | merged |
+| Fusion runs for `patch` (#30) | Upstream composes Pi's `edit` and `write` only, and its `file-queue.ts` has no patch path, so it takes no position on fusion for a patch tool. This host has one, so the port adds fusion to it and enumerates the written paths with `Patch.parse`. A port addition: chosen, not forced. | merged |
+| The recall placeholder drops upstream's instruction (#26) | Upstream's placeholder tells the model to call `obs_recall` for the full text. This port deletes that instruction and pins the deletion in `tests/observation-pack.test.ts`. Decided on measurement: the imperative wording measured +128 % round-trips against its control arm, and the neutral wording restored round-trip parity at -22 % average context. | merged |
+| A malformed `then_run` is rejected visibly (#31, #35) | Upstream reserves `then_run` for itself and hands a value it did not shape straight to the shell, so nothing rejects it in the model's view. Here the plugin adds the property to the tool's own schema, so the host codec rejects most malformed shapes before `execute` — five of seven measured — but the strings `Infinity`, `-Infinity` and `NaN` pass the codec, and a codec rejection replaces the marker with a decode error. The runtime check carries the contract the model reads. | merged |
 | Packing a payload that carries a Pi evidence receipt | Upstream refuses to pack a payload whose text carries an evidence receipt line (`containsReducerReceipt`); this port gates on size alone, so a `read` or `cat` of a Pi session file is excerpted here. This host has no receipt concept of its own. Whether such a payload should be packed is undecided. | undecided |
 
 ## Owed work
@@ -80,4 +81,4 @@ convention.
 | Shell drive spellings (`/c/…`, `/c:/…`, `/mnt/c/…`, `/cygdrive/c/…`) | **Follow the host.** Apply `@opencode/util` `FSUtil.windowsPath` in `resolveMutationPath` before `resolve`, instead of copying upstream's resolver. Otherwise one file holds two queue keys on Windows. | merged (#62, issue #61) |
 | `@` and `file://` path syntax | **Stay dropped.** Pi-only syntax; the host does not use it. | — |
 | `~` expansion | **Stay dropped in the queue.** `@opencode/util` expands no home directory, and the queue must key the name the operation uses. The host's own file-access resolver does expand `~` (CLI bundle), so a mutation that spells `~/x` is keyed on the spelled name. Known gap, unverified for tool inputs specifically. | — |
-| Unicode-space folding | **Stay dropped.** The host folds no spaces. Folding can only merge two names onto one key, which over-serializes; it adds no correctness. | — |
+| Unicode-space folding | **Stay dropped.** The host folds no spaces when it resolves a path: `FSUtil.windowsPath` and the file-access resolver fold nothing. One `read`-tool fallback does fold U+00A0 and U+202F, which is not path resolution. Folding here can only merge two names onto one key, which over-serializes; it adds no correctness. | — |
