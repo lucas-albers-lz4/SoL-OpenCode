@@ -39,11 +39,12 @@ Upstream extensions with no port: `evidence-preserving-reducer`, `online-context
 | Defect | Upstream behaviour | This port | Status |
 |---|---|---|---|
 | Hardlink aliasing (#36) | `canonicalQueueKey` keys the canonical path only, so two hardlinked names interleave | inode key added | merged |
-| Dangling-symlink aliasing (#56) | the `ENOENT` ancestor walk gives the link and its missing target disjoint keys | link-chain keys | in review (#58) |
-| `ELOOP`, or any other unresolvable name, out of key derivation (decided in #58's review, part of #56's change) | `canonicalQueueKey` throws for a cyclic link; a fused `write` reaches it through `executeMutationThenRunSinglePath` | falls back to the name key | in review (#58) |
+| Dangling-symlink aliasing (#56) | the `ENOENT` ancestor walk gives the link and its missing target disjoint keys | link-chain keys | merged (#58) |
+| `ELOOP`, or any other unresolvable name, out of key derivation (decided in #58's review, part of #56's change) | `canonicalQueueKey` throws for a cyclic link; a fused `write` reaches it through `executeMutationThenRunSinglePath` | falls back to the name key | merged (#58) |
 
-On the default branch today, a dangling symlink keeps its own path key (`src/action-fusion/file-queue.ts`
-says so), and a cyclic link makes the queue throw. Both change in #58.
+Before #58, the default branch kept a dangling symlink on its own path key (`src/action-fusion/file-queue.ts`
+said so), and a cyclic link made the queue throw. Both landed in #58, so a link and its missing target
+now share a queue and an unresolvable name falls back to its name key.
 
 ### One claim retracted, not a defect fixed
 
