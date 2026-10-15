@@ -269,9 +269,12 @@ describe("withFusedFileQueues", () => {
 describe("symlink queue keys", () => {
   /** 1 means one shared queue; 2 means the two names could interleave. */
   async function peakConcurrency(paths: readonly string[]): Promise<number> {
-    // Warm the key derivation, then hold long enough to overlap two acquisitions. If a section
-    // ends before the next one's keys are derived, a disjoint pair also measures 1, and every
-    // fixture below would pass without testing the queue at all. The control fixture asserts 2.
+    // The hold is what makes two sections overlap, and it must exceed the key derivation. If a
+    // section ends first, a disjoint pair also measures 1 and every fixture below would pass
+    // without testing the queue at all. Keys are re-derived per acquisition and never cached, so
+    // a warm-up run shortens nothing that follows; it only warms the filesystem. The measured
+    // derivation is 33 ms for a 33-link chain and 51-54 ms for an 80-link one on an idle machine,
+    // and the control fixture below asserts 2 against the 80-link pair.
     for (const path of paths) await withFusedFileQueue(path, async () => {});
 
     let concurrent = 0;
@@ -279,7 +282,7 @@ describe("symlink queue keys", () => {
     const section = async () => {
       concurrent += 1;
       peak = Math.max(peak, concurrent);
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 250));
       concurrent -= 1;
     };
 
@@ -392,6 +395,29 @@ describe("symlink queue keys", () => {
     // The kernel agrees they are one file: writing through the chain creates `dir/target.txt`.
     await writeFile(throughLink, "x\n", "utf8");
     expect(await realpath(throughLink)).toBe(await realpath(target));
+  });
+
+  it("resolves a symlinked component inside the link target", async () => {
+    // `link.txt -> sub/../target.txt` with `sub` a symlink: the kernel writes
+    // `<dir>/deep/target.txt`, while a lexical collapse names `<dir>/target.txt`, which no path
+    // through the link reaches. Both names are absent at enqueue, so only the path keys can hold
+    // them together (issue #56's condition). The second check pins the other direction: the queue
+    // must not also lock the name the kernel never reaches, which would over-serialize an
+    // unrelated file.
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-target-component-"));
+    const nest = join(dir, "deep", "nest");
+    await mkdir(nest, { recursive: true });
+    await symlink(nest, join(dir, "sub"));
+    const linkPath = join(dir, "link.txt");
+    await symlink("sub/../target.txt", linkPath);
+    const kernelName = join(dir, "deep", "target.txt");
+
+    expect(await peakConcurrency([linkPath, kernelName])).toBe(1);
+    expect(await peakConcurrency([linkPath, join(dir, "target.txt")])).toBe(2);
+
+    // The kernel agrees with the first pair: writing through the link creates `deep/target.txt`.
+    await writeFile(linkPath, "x\n", "utf8");
+    expect(await realpath(linkPath)).toBe(await realpath(kernelName));
   });
 
   it("does not hang on a symlink cycle and still shares the queue", async () => {

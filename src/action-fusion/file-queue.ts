@@ -5,7 +5,7 @@
  */
 
 import { lstat, readlink, realpath, stat } from "node:fs/promises";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
 
 const queueTails = new Map<string, Promise<void>>();
 
@@ -77,6 +77,34 @@ async function pathQueueKey(resolvedPath: string): Promise<string> {
 }
 
 /**
+ * Join a link target to the physical directory the link lives in, resolving the target's own
+ * symlinked components the way the kernel does. The final component stays lexical: the target
+ * often does not exist yet, which is the shape this walk exists for.
+ */
+async function physicalTarget(linkDirectory: string, target: string): Promise<string> {
+  const segments = target.split(/[\\/]+/).filter((segment) => segment !== "" && segment !== ".");
+  let current = isAbsolute(target) ? sep : linkDirectory;
+
+  for (const [index, segment] of segments.entries()) {
+    if (segment === "..") {
+      current = dirname(current);
+      continue;
+    }
+    const candidate = resolve(current, segment);
+    if (index === segments.length - 1) return candidate;
+    try {
+      current = await realpath(candidate);
+    } catch (error) {
+      if (!isUnresolvablePathError(error)) throw error;
+      // Nothing below this prefix exists either, so the remaining target stays lexical.
+      current = candidate;
+    }
+  }
+
+  return current;
+}
+
+/**
  * Every name one operation can reach through symlinks, starting at `resolvedPath`.
  *
  * `realpath` cannot resolve a link whose target does not exist yet, so a dangling link
@@ -112,19 +140,20 @@ async function linkChain(resolvedPath: string): Promise<string[]> {
       return chain;
     }
 
-    // The kernel resolves a relative target against the link's directory **as it really is**,
-    // not as the name spells it. A lexical resolve of `../../target.txt` through a directory
-    // symlink can name one file two ways, and the two names then hold disjoint keys — issue
-    // #56's failure mode again. Resolve the directory first. When it cannot be resolved, keep
-    // the lexical name: the file it points at does not exist yet either way.
-    // Cost: one `lstat` per acquisition, plus `readlink` and `realpath` per link hop.
+    // The kernel resolves a target against the link's directory **as it really is**, and it
+    // resolves every symlink inside the target too. `path.resolve` does neither: it collapses
+    // `..` against the spelled name, so `sub/../target.txt` through a symlinked `sub`, or
+    // `lib/../include/y.h` through a symlinked `lib`, names a file the kernel never reaches —
+    // and then two names for one file hold disjoint keys, which is issue #56's failure mode
+    // again. Walk the target's components and resolve each non-final prefix physically.
+    // Cost: one `lstat` per acquisition, plus `readlink` and `realpath` per link hop or prefix.
     let linkDirectory = dirname(current);
     try {
       linkDirectory = await realpath(linkDirectory);
     } catch (error) {
       if (!isUnresolvablePathError(error)) throw error;
     }
-    current = resolve(linkDirectory, target);
+    current = await physicalTarget(linkDirectory, target);
     // A repeated name ends the walk. The depth bound alone would also stop a cycle, but
     // the early exit keeps it at two `lstat` calls instead of the full bound.
     if (seen.has(current)) return chain;

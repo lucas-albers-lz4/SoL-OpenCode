@@ -116,6 +116,6 @@ describe("queue keys from unusual stat results", () => {
     await withFusedFileQueue(first, async () => "ran");
     const calls = mockedLstat.mock.calls.filter(([name]) => String(name).startsWith(dir)).length;
 
-    expect(calls).toBeLessThanOrEqual(4);
+    expect(calls).toBe(2);
   });
 });
