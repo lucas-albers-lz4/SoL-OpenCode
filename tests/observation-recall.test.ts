@@ -146,8 +146,8 @@ describe("readRecallChunk offsets", () => {
   it("returns an empty page when the cap cannot hold the character at the offset", async () => {
     // Paging is by bytes, as upstream SoL-Pi pages. A cap smaller than the character at the
     // offset cannot hold a page, so the page is empty and the cursor does not advance. The
-    // shipped caller passes 15,872 bytes, which makes this unreachable in normal use: the
-    // test pins it so that a change to it is a decision, and the interface comment names it
+    // shipped caller passes 15,872 bytes, which makes this unreachable for well-formed UTF-8:
+    // the test pins it so that a change to it is a decision, and the interface comment names it
     // as the shape a caller must not loop on.
     const path = await fixture("😀😀😀");
 

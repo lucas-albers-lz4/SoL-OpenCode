@@ -209,23 +209,25 @@ export function placeholderFor(observation: Observation): string {
  * inside the window, so a page never splits a character that is complete in the file.
  *
  * Two shapes follow from paging by bytes:
- * - When no character fits the window, `text` is empty, `nextOffset` equals `startOffset`, and
- *   `eof` stays false. **Do not loop on `nextOffset` in that shape** — it does not advance. Raise
- *   `maxBytes` instead. A character wider than `maxBytes` produces this shape, and so does a run of
- *   `maxBytes` or more continuation bytes at the offset. The shipped caller passes 15,872 bytes
+ * - When no character fits the window, `text` is empty and `nextOffset` equals `startOffset`.
+ *   **Do not loop on `nextOffset` in that shape** — it does not advance. Raise `maxBytes` instead.
+ *   A character wider than `maxBytes` produces this shape, and so does a run of `maxBytes` or more
+ *   continuation bytes at the offset. `eof` is false while bytes remain after the empty page, and
+ *   true when the snap reached the end of the file. The shipped caller passes 15,872 bytes
  *   (`RECALL_LIMITS`), so well-formed UTF-8 cannot reach it.
  * - Bytes that are not valid UTF-8 decode with replacement characters (U+FFFD). An object truncated
  *   inside a character ends that way, and the call still returns the page. A stored object is
  *   written from a JavaScript string, so this shape means the object is damaged.
  *
- * Upstream SoL-Pi pages by byte offset the same way, with the same end trim, and promises nothing
- * further about either shape.
+ * Upstream SoL-Pi pages by byte offset the same way and trims the end with the same walk-back, and
+ * it promises nothing further about either shape. The start snap is this port's own: upstream starts
+ * at the offset it is given, and can therefore begin inside a character.
  */
 export interface RecallChunk {
   readonly text: string;
   readonly bytes: number;
   readonly lines: number;
-  /** Byte offset this chunk actually starts at — always a character boundary. */
+  /** Byte offset this page starts at: a character boundary for every object the store writes. */
   readonly startOffset: number;
   readonly nextOffset: number;
   readonly eof: boolean;
