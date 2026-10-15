@@ -60,12 +60,12 @@ describe("applyActionFusionToEditor transform replay", () => {
       namespace: () => {},
     };
 
-    applyActionFusionToEditor(editor, { cwd: "/tmp/project", patchThenRunInSchema: true });
+    applyActionFusionToEditor(editor, { cwd: "/tmp/project-replay-wrap", patchThenRunInSchema: true });
     await stored.execute({ path: "src/a.ts" }, mockContext);
     expect(baseExecute).toHaveBeenCalledTimes(1);
 
     stored = baseEditTool(baseExecute);
-    applyActionFusionToEditor(editor, { cwd: "/tmp/project", patchThenRunInSchema: true });
+    applyActionFusionToEditor(editor, { cwd: "/tmp/project-replay-wrap", patchThenRunInSchema: true });
     await stored.execute({ path: "src/a.ts" }, mockContext);
     expect(baseExecute).toHaveBeenCalledTimes(2);
   });
@@ -100,7 +100,7 @@ describe("applyActionFusionToEditor transform replay", () => {
       namespace: () => {},
     };
 
-    applyActionFusionToEditor(editor, { cwd: "/tmp/project", patchThenRunInSchema: true });
+    applyActionFusionToEditor(editor, { cwd: "/tmp/project-schema-copy", patchThenRunInSchema: true });
     expect(stored.input).toHaveProperty("properties.then_run");
     expect(nested).not.toHaveProperty("then_run");
   });
@@ -133,7 +133,7 @@ describe("applyActionFusionToEditor transform replay", () => {
       namespace: () => {},
     };
 
-    applyActionFusionToEditor(editor, { cwd: "/tmp/project", patchThenRunInSchema: true });
+    applyActionFusionToEditor(editor, { cwd: "/tmp/project-declared-json", patchThenRunInSchema: true });
     expect(Schema.isSchema(stored.input)).toBe(true);
     expect((stored.input as Schema.Struct<Schema.Struct.Fields>).fields).toHaveProperty("then_run");
     expect(input.fields).not.toHaveProperty("then_run");
@@ -176,7 +176,7 @@ describe("applyActionFusionToEditor transform replay", () => {
       namespace: () => {},
     };
 
-    applyActionFusionToEditor(editor, { cwd: "/tmp/project", patchThenRunInSchema: true });
+    applyActionFusionToEditor(editor, { cwd: "/tmp/project-declared-struct", patchThenRunInSchema: true });
 
     // The schema keeps the host's own property instead of the fusion one.
     expect(stored.input).toHaveProperty("properties.then_run.type", "string");
@@ -222,7 +222,7 @@ describe("applyActionFusionToEditor transform replay", () => {
       namespace: () => {},
     };
 
-    applyActionFusionToEditor(editor, { cwd: "/tmp/project", patchThenRunInSchema: true });
+    applyActionFusionToEditor(editor, { cwd: "/tmp/project-declared-struct", patchThenRunInSchema: true });
 
     // The struct's own declaration stands, and its value reaches the executor.
     expect(stored.input).toBe(declaredInput);
@@ -262,7 +262,7 @@ describe("applyActionFusionToEditor transform replay", () => {
       namespace: () => {},
     };
 
-    const config = { cwd: "/tmp/project", patchThenRunInSchema: true };
+    const config = { cwd: "/tmp/project-replay-accumulating", patchThenRunInSchema: true };
     applyActionFusionToEditor(editor, config);
     applyActionFusionToEditor(editor, config);
 
@@ -304,7 +304,7 @@ describe("applyActionFusionToEditor transform replay", () => {
       namespace: () => {},
     };
 
-    applyActionFusionToEditor(editor, { cwd: "/tmp/project", patchThenRunInSchema: true });
+    applyActionFusionToEditor(editor, { cwd: "/tmp/project-foreign-family", patchThenRunInSchema: true });
 
     const result = await stored.execute(
       { path: "src/a.ts", then_run: { command: "echo foreign" } },
@@ -312,6 +312,13 @@ describe("applyActionFusionToEditor transform replay", () => {
     );
 
     expect(baseExecute).toHaveBeenCalledTimes(1);
+    // The value must reach the host executor intact. Without this assertion a refactor that strips
+    // `then_run` here passes every test in this file — issue #48's failure mode, for a host tool
+    // whose unreadable schema declares the property.
+    expect(baseExecute).toHaveBeenCalledWith(
+      { path: "src/a.ts", then_run: { command: "echo foreign" } },
+      mockContext,
+    );
     expect(shellExecute).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain("[then_run:succeeded]");
   });
