@@ -420,6 +420,21 @@ describe("symlink queue keys", () => {
     expect(await realpath(linkPath)).toBe(await realpath(kernelName));
   });
 
+  it("treats a backslash in a target as a name character off Windows", async () => {
+    // A POSIX filename may contain a literal backslash, so `g\h.txt` is one component, not
+    // `g/h.txt`. Splitting on both separators regardless of platform keys the phantom `g/h.txt`
+    // — a real, unrelated file here — and leaves the name the kernel does reach with a disjoint
+    // key. Both directions are asserted for that reason.
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-backslash-"));
+    await mkdir(join(dir, "g"), { recursive: true });
+    await writeFile(join(dir, "g", "h.txt"), "unrelated\n", "utf8");
+    const linkPath = join(dir, "link.txt");
+    await symlink("g\\h.txt", linkPath);
+
+    expect(await peakConcurrency([linkPath, join(dir, "g\\h.txt")])).toBe(1);
+    expect(await peakConcurrency([linkPath, join(dir, "g", "h.txt")])).toBe(2);
+  });
+
   it("does not hang on a symlink cycle and still shares the queue", async () => {
     const dir = await mkdtemp(join(tmpdir(), "fused-queue-cycle-"));
     const first = join(dir, "a.txt");

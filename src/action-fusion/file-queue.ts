@@ -32,8 +32,9 @@ function isMissingPathError(error: unknown): boolean {
 
 /**
  * A name the filesystem cannot resolve at all: it is absent, or it is a symlink cycle
- * (`ELOOP`). Both fall back to the name-based key, so key derivation never turns a
- * broken workspace path into a plugin error before the host tool reports its own.
+ * (`ELOOP`). Both fall back to the name-based key, so for these two shapes key derivation
+ * does not turn a broken workspace path into a plugin error before the host tool reports its
+ * own. Any other error, a permission problem or a filesystem fault, still propagates.
  */
 function isUnresolvablePathError(error: unknown): boolean {
   return (
@@ -80,9 +81,15 @@ async function pathQueueKey(resolvedPath: string): Promise<string> {
  * Join a link target to the physical directory the link lives in, resolving the target's own
  * symlinked components the way the kernel does. The final component stays lexical: the target
  * often does not exist yet, which is the shape this walk exists for.
+ *
+ * The split is on the platform separator only. Off Windows a backslash is an ordinary name
+ * character, so `g\h.txt` is one component: splitting on it too would key the phantom `g/h.txt`,
+ * a real file the link never reaches. A UNC target on win32 (`\\server\share\…`) is not handled
+ * here; no test in this environment can exercise that shape.
  */
 async function physicalTarget(linkDirectory: string, target: string): Promise<string> {
-  const segments = target.split(/[\\/]+/).filter((segment) => segment !== "" && segment !== ".");
+  const separator = sep === "\\" ? /[\\/]+/ : "/";
+  const segments = target.split(separator).filter((segment) => segment !== "" && segment !== ".");
   let current = isAbsolute(target) ? sep : linkDirectory;
 
   for (const [index, segment] of segments.entries()) {
