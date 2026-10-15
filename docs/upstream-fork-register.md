@@ -36,7 +36,13 @@ Upstream extensions with no port: `evidence-preserving-reducer`, `online-context
 | Hardlink aliasing (#36) | `canonicalQueueKey` keys the canonical path only, so two hardlinked names interleave | inode key added |
 | Dangling-symlink aliasing (#56) | the `ENOENT` ancestor walk gives the link and its missing target disjoint keys | link-chain keys |
 | `ELOOP` out of key derivation | `canonicalQueueKey` throws for a cyclic link | falls back to the name key |
-| Non-advancing recall page (#55) | same page | **matches upstream**: the shape needs `maxBytes <= 3` (the shipped caller passes 15,872), so the port's promise was the defect and the contract changed |
+
+### One claim retracted, not a defect fixed
+
+The recall page does not advance when the character at the offset is wider than `maxBytes` (#55).
+Upstream returns the same page, and the shape needs `maxBytes` of 3 or less — the shipped caller
+passes 15,872. Upstream makes no character-alignment or U+FFFD promise either, so the promise in this
+port's comment was the defect. The contract now matches upstream (#60).
 
 ## Deviations kept on purpose
 
@@ -54,6 +60,7 @@ convention.
 
 | Item | Decision |
 |---|---|
+| A host tool that declares its own `then_run` (#48) | **Follow the declaration.** Upstream replaces tool definitions and reserves `then_run` for itself, so a declared value belongs to the host. The port defers and passes the value through unchecked. |
 | Shell drive spellings (`/c/…`, `/mnt/c/…`, `/cygdrive/c/…`) | **Follow the host.** Apply `@opencode/util` `FSUtil.windowsPath` in `resolveMutationPath` (#61), instead of copying upstream's resolver. Otherwise one file holds two queue keys on Windows. |
 | `@` and `file://` path syntax | **Stay dropped.** Pi-only syntax; the host does not use it. |
 | `~` expansion | **Stay dropped.** `@opencode/util` expands no home directory, so expanding it in the queue would key a file the mutation does not write. |
