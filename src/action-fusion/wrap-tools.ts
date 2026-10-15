@@ -25,7 +25,12 @@ const WRITE_THEN_RUN_DESCRIPTION =
 const PATCH_THEN_RUN_DESCRIPTION =
   "Command to run after the patch succeeds on all written paths; optional timeout in seconds. Omitted from schema when patch paths cannot be enumerated.";
 
-const THEN_RUN_DESCRIPTION: Record<(typeof MUTATION_TOOL_IDS)[number], string> = {
+/**
+ * The `then_run` property description for each mutation tool. Model-visible on every
+ * provider request: `tests/schema-cost.test.ts` measures the shipped text and pins the
+ * resulting byte cost, so a change here is a decision recorded in docs/quality-guard.md.
+ */
+export const THEN_RUN_DESCRIPTION: Record<(typeof MUTATION_TOOL_IDS)[number], string> = {
   edit: EDIT_THEN_RUN_DESCRIPTION,
   write: WRITE_THEN_RUN_DESCRIPTION,
   patch: PATCH_THEN_RUN_DESCRIPTION,
