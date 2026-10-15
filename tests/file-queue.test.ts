@@ -296,6 +296,8 @@ describe("symlink queue keys", () => {
     // that cannot reach 2 would also report for disjoint queues. This pair derives keys the
     // expensive way — an 80-link chain, well past the walk's 64-hop bound — and is disjoint by
     // construction: the walk from the head stops at the bound, so it never reaches the target.
+    // Not a pure control, for the same reason: if it fails, suspect an ELOOP or other derivation
+    // regression before the hold, because the expensive derivation is what makes it sensitive.
     const dir = await mkdtemp(join(tmpdir(), "fused-queue-control-"));
     const target = join(dir, "target.txt");
     let previous = target;
@@ -346,7 +348,10 @@ describe("symlink queue keys", () => {
 
   it("walks a dangling chain longer than the kernel's own resolution limit", async () => {
     // Linux resolves at most 40 links, so a bound below that leaves chains of 33-40 links
-    // with disjoint keys: exactly the interleaving #56 describes.
+    // with disjoint keys: exactly the interleaving #56 describes. This fixture distinguishes the
+    // bound from 32, which is the mutation that fails it. Its exact value (64) is not pinned by an
+    // assertion, because a 41-link chain cannot be probed: the kernel itself raises `ELOOP` there.
+    // The constant's own comment records why it sits above that limit.
     const dir = await mkdtemp(join(tmpdir(), "fused-queue-deep-chain-"));
     const target = join(dir, "target.txt");
     let previous = target;
