@@ -18,9 +18,13 @@ Before you merge a model-visible change, add two items.
    visible.
 2. **A quality statement for the affected arm.**
    - If the change can alter model-visible volume or the number of provider
-     round-trips, measure both arms (off and on) with
-     [`benchmarks/`](../benchmarks/README.md). Report the median and the spread.
-     Do not quote a single run.
+     round-trips, measure it with [`benchmarks/`](../benchmarks/README.md). Its
+     arms are `off*` (no plugin) and `neu*` (this working tree), so one run does
+     not produce the quality floor below: that floor compares this head with
+     `main` at the base commit, which takes a second run in a clone of that
+     commit. Compare the two `neu` arms with the model and the prompt bytes held
+     fixed. Repeat each arm at least twice, and report the median and the spread
+     only when the run count can support them.
    - If the change cannot alter volume or round-trips, state why. When you can
      count it, give the count.
 
@@ -71,14 +75,15 @@ byte lengths. Use the base each family really has:
 | `patch` | 516 | 570 |
 
 Each figure is the cost of the whole `then_run` property. It is not the cost of the description text
-alone. The fixed command and timeout sub-schema accounts for 421 bytes of it. The three descriptions
-account for the rest: 113 / 115 / 149 bytes. The per-tool ceiling in the test is 700 bytes for the
-property. That leaves about 279 bytes for the text you write.
+alone. The fixed command and timeout sub-schema accounts for 421 bytes of the Effect column and 367
+of the JSON column. The three descriptions account for the rest: 113 / 115 / 149 bytes. The per-tool
+ceiling in the test is 700 bytes for the property, which leaves about 333 bytes of text on the JSON
+column and 279 on the Effect column.
 
-For the Effect column, do not use an empty struct base. That is not the shape a real tool input has,
-and the delta moves with the base. The measured delta is stable across the non-empty bases tried
-here — one field and three fields both read 534 / 536 / 570. On the JSON family, a tool that already
-lists another property measures one byte more (481 / 483 / 517).
+For the Effect column, do not use an empty struct base: an empty base and a one-field base disagree
+by about 38 bytes per tool. Among non-empty bases the delta does not move — one field and three
+fields both read 534 / 536 / 570 — so the one-field figure is the one to record. On the JSON family
+a tool that already lists another property measures one byte more (481 / 483 / 517).
 
 `tests/schema-cost.test.ts` reads the shipped descriptions and pins both columns, plus a 700-byte
 ceiling for one property. One assertion reads this table and compares it with those numbers. A

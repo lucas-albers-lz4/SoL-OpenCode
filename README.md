@@ -154,8 +154,8 @@ plugin arm.
 See [`benchmarks/README.md`](./benchmarks/README.md) for the protocol, the
 method rules that make these numbers citable, and how to regenerate them.
 
-The merge rule for changes that alter what the model sees — schema text, result
-text, archive chunk boundaries, or a failure path that replaces a silent drop — is in
+The merge rule for a model-visible change — schema text, result text, an archive
+chunk boundary, or a failure path that replaces a silent drop — is in
 [`docs/quality-guard.md`](./docs/quality-guard.md).
 
 ## Provenance

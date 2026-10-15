@@ -30,6 +30,16 @@ const EXPECTED_ADDED_BYTES = {
   effect: { edit: 534, write: 536, patch: 570 },
 } satisfies Record<string, Record<keyof typeof THEN_RUN_DESCRIPTION, number>>;
 
+/** Fixed cost of the added property when its description text is empty, per family base. */
+const EXPECTED_FIXED_BYTES = { json: 367, effect: 421 } satisfies Record<string, number>;
+
+/** The shipped description text alone, per tool. */
+const EXPECTED_DESCRIPTION_BYTES = {
+  edit: 113,
+  write: 115,
+  patch: 149,
+} satisfies Record<keyof typeof THEN_RUN_DESCRIPTION, number>;
+
 type Family = keyof typeof EXPECTED_ADDED_BYTES;
 type ToolId = keyof typeof THEN_RUN_DESCRIPTION;
 
@@ -81,6 +91,18 @@ describe("model-visible schema cost", () => {
         // table and docs/quality-guard.md together, or the model pays bytes nobody chose.
         expect(cost).toBe(EXPECTED_ADDED_BYTES[family][tool as ToolId]);
         expect(cost).toBeLessThanOrEqual(CEILING_BYTES);
+      });
+
+      it(`keeps the ${family} split of ${tool}.then_run pinned`, () => {
+        // The total alone would not catch a compensating edit: four bytes moved out of the
+        // description text into the fixed sub-schema leaves every total above unchanged, and the
+        // decomposition recorded in docs/quality-guard.md stale.
+        const fixed = addedBytes(family, "");
+        const text = addedBytes(family, description) - fixed;
+
+        expect(fixed).toBe(EXPECTED_FIXED_BYTES[family]);
+        expect(text).toBe(EXPECTED_DESCRIPTION_BYTES[tool as ToolId]);
+        expect(fixed + text).toBe(EXPECTED_ADDED_BYTES[family][tool as ToolId]);
       });
     }
   }
