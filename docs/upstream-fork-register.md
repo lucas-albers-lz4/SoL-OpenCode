@@ -4,10 +4,7 @@ Reference: SoL-Pi at `e1a586af0ad8956f42ae5b26bba20e48fbf30e00` (README "Provena
 
 This page records every point where this port does not follow SoL-Pi, and why.
 
-**Read the status column.** *Merged* rows describe code on the default branch. *In review* rows
-describe work that is not there yet: read the code for what the port does today, this page for the
-decision, and the named PR for the change. The column is a snapshot, not a live view: a later merge
-moves a row, so check the default branch before you rely on one.
+**Read the status column.** *Merged* rows describe code on the default branch, and *merged (#NN)* also names the PR that landed it. *In review (#NN)* marks a change that is not there yet: read the code for what the port does today, this page for the decision, and the named PR for the change. *Undecided* marks behaviour nobody has chosen yet, listed under Owed work. A dash marks a decision that needs no change. The column is a snapshot, not a live view: a later merge moves a row, so check the default branch before you rely on one.
 
 ## The rule
 
@@ -59,8 +56,8 @@ character-alignment or U+FFFD promise either, so the promise in this port's comm
 |---|---|---|
 | Recall start-snap and offset validation (#34) | A page never starts inside a character, and a start inside one would decode as a replacement character. | merged |
 | Fusion runs for `patch` (#30) | Upstream composes Pi's `edit` and `write` only, and its `file-queue.ts` has no patch path, so it takes no position on fusion for a patch tool. This host has one, so the port adds fusion to it and enumerates the written paths with `Patch.parse`. A port addition: chosen, not forced. | merged |
-| The recall placeholder drops upstream's instruction (#26) | Upstream's placeholder tells the model to call `obs_recall` for the full text. This port deletes that instruction and pins the deletion in `tests/observation-pack.test.ts`. Decided on measurement: the imperative wording measured +128 % round-trips against its control arm, and the neutral wording restored round-trip parity at -22 % average context. | merged |
-| A malformed `then_run` is rejected visibly (#31, #35) | Upstream reserves `then_run` for itself and hands a value it did not shape straight to the shell, so nothing rejects it in the model's view. Here the plugin adds the property to the tool's own schema, so the host codec rejects most malformed shapes before `execute` — five of seven measured — but the strings `Infinity`, `-Infinity` and `NaN` pass the codec, and a codec rejection replaces the marker with a decode error. The runtime check carries the contract the model reads. | merged |
+| The recall placeholder drops upstream's instruction (#26) | Upstream's placeholder tells the model to call `obs_recall` for the full text. This port deletes that instruction and pins the deletion in `tests/observation-pack.test.ts`. Decided on measurement: the imperative wording measured +128 % round-trips against its control arm, and the shipped neutral wording replaced it at ~1.5× the control's round-trips (median 14 → 21) against the imperative arm's ~2.4× (README, "Measured behavior"). | merged |
+| A malformed `then_run` is rejected visibly (#31, #35) | Upstream reserves `then_run` for itself and hands a value it did not shape straight to the shell, so nothing rejects it in the model's view. Here the plugin adds the property to the tool's own schema, so the codec rejects most malformed shapes before `execute`, including the strings that the serialized `timeout` permits. What the codec admits — a numeric `Infinity` — the runtime check rejects, and a codec rejection would replace the marker with a decode error. The runtime check therefore carries the contract the model reads. | merged |
 | Packing a payload that carries a Pi evidence receipt | Upstream refuses to pack a payload whose text carries an evidence receipt line (`containsReducerReceipt`); this port gates on size alone, so a `read` or `cat` of a Pi session file is excerpted here. This host has no receipt concept of its own. Whether such a payload should be packed is undecided. | undecided |
 
 ## Owed work
