@@ -49,7 +49,7 @@ says so), and a cyclic link makes the queue throw. Both change in #58.
 The recall page does not advance when no character fits the window (#55). Upstream returns the same
 page, and the shape needs `maxBytes` of 3 or less — the shipped caller passes 15,872. Upstream makes no
 character-alignment or U+FFFD promise either, so the promise in this port's comment was the defect.
-#60 corrects the contract, and it is **in review**: the default branch still carries the promise.
+#60 corrected the contract, and it is **merged**: the default branch no longer carries the promise.
 
 ## Deviations kept on purpose
 
@@ -73,7 +73,7 @@ convention.
 
 | Item | Decision | Status |
 |---|---|---|
-| A host tool that declares its own `then_run` | **Follow the declaration.** Upstream replaces tool definitions and reserves `then_run` for itself, so a declared value belongs to the host. The schema side has left the host's property alone since #42; the execute side must pass the value through instead of reinterpreting it. | schema side merged (#42); execute side in review (#59, issue #48) |
+| A host tool that declares its own `then_run` | **Follow the declaration.** Upstream replaces tool definitions and reserves `then_run` for itself, so a declared value belongs to the host. The schema side has left the host's property alone since #42; the execute side must pass the value through instead of reinterpreting it. | merged: schema side (#42), execute side (#59, issue #48) |
 | Shell drive spellings (`/c/…`, `/mnt/c/…`, `/cygdrive/c/…`) | **Follow the host.** Apply `@opencode/util` `FSUtil.windowsPath` in `resolveMutationPath` before `resolve`, instead of copying upstream's resolver. Otherwise one file holds two queue keys on Windows. | in review (#62, issue #61) |
 | `@` and `file://` path syntax | **Stay dropped.** Pi-only syntax; the host does not use it. | — |
 | `~` expansion | **Stay dropped in the queue.** `@opencode/util` expands no home directory, and the queue must key the name the operation uses. The host's own file-access resolver does expand `~` (CLI bundle), so a mutation that spells `~/x` is keyed on the spelled name. Known gap, unverified for tool inputs specifically. | — |
