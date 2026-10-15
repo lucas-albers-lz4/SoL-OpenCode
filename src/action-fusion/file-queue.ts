@@ -9,8 +9,12 @@ import { basename, dirname, resolve } from "node:path";
 
 const queueTails = new Map<string, Promise<void>>();
 
-/** Bound on followed symlinks, so a link cycle cannot loop the key derivation. */
-const MAX_LINK_DEPTH = 32;
+/**
+ * Bound on followed symlinks, so a link cycle cannot loop the key derivation. Linux
+ * resolves at most 40 links (`ELOOP` beyond that), so the bound sits above the OS limit:
+ * every chain the kernel can resolve is walked, and a longer one is bounded here.
+ */
+const MAX_LINK_DEPTH = 64;
 
 /** OpenCode mutation tools use `path` relative to the workspace directory (no Pi `@` / `file://` resolver). */
 export function resolveMutationPath(cwd: string, path: string): string {
@@ -100,12 +104,17 @@ async function linkChain(resolvedPath: string): Promise<string[]> {
     let target: string;
     try {
       target = await readlink(current);
-    } catch (error) {
-      if (!isUnresolvablePathError(error)) throw error;
+    } catch {
+      // `lstat` reported a link, so a `readlink` failure here is a race (the name was
+      // swapped for a regular file, `EINVAL`), a permission problem, or a limit: end the
+      // walk on the name key rather than turn a transient filesystem state into a plugin
+      // error before the host tool reports its own.
       return chain;
     }
 
     current = resolve(dirname(current), target);
+    // A repeated name ends the walk. The depth bound alone would also stop a cycle, but
+    // the early exit keeps it at two `lstat` calls instead of the full bound.
     if (seen.has(current)) return chain;
     seen.add(current);
     chain.push(current);

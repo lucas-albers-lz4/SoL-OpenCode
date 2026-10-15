@@ -304,7 +304,40 @@ describe("symlink queue keys", () => {
     expect(await peakConcurrency([first, target])).toBe(1);
   });
 
+  it("links a relative target to the link's own directory, not the working directory", async () => {
+    // The recorded design shape resolves a relative target against the link's directory.
+    // Every other fixture passes an absolute target, where both rules agree, so only this
+    // one can fail if the resolution rule is changed.
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-relative-"));
+    const target = join(dir, "target.txt");
+    const dangling = join(dir, "link.txt");
+    await symlink("target.txt", dangling);
+
+    expect(await peakConcurrency([dangling, target])).toBe(1);
+  });
+
+  it("walks a dangling chain longer than the kernel's own resolution limit", async () => {
+    // Linux resolves at most 40 links, so a bound below that leaves chains of 33-40 links
+    // with disjoint keys: exactly the interleaving #56 describes.
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-deep-chain-"));
+    const target = join(dir, "target.txt");
+    let previous = target;
+    let first = target;
+    for (let link = 0; link < 33; link += 1) {
+      const next = join(dir, `link-${String(link)}.txt`);
+      await symlink(previous, next);
+      previous = next;
+      first = next;
+    }
+
+    expect(await peakConcurrency([first, target])).toBe(1);
+  });
+
   it("keeps the existing-target behavior for a resolvable symlink", async () => {
+    // A preservation guard for the reviewer criterion "an existing target's behaviour is
+    // unchanged". It passes on `main` too — the inode key already carries a resolvable
+    // link — so it cannot fail on a change to the link-chain walk; the relative-target and
+    // deep-chain fixtures above are the ones that pin that walk.
     const dir = await mkdtemp(join(tmpdir(), "fused-queue-resolvable-"));
     const target = join(dir, "target.txt");
     const linkPath = join(dir, "link.txt");
