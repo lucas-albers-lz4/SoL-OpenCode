@@ -115,6 +115,15 @@ function thenRunEffectField(description: string) {
 }
 
 /**
+ * True when the plugin can read or add `then_run` on this schema family. A family it cannot
+ * read is a family it never advertised `then_run` on, so any value in the input is the
+ * host's own (see the deferral in `wrap-tools.ts`).
+ */
+export function supportsThenRunProperty(input: Tool.ValueSchema): boolean {
+  return isEffectStruct(input) || isJsonObjectSchema(input);
+}
+
+/**
  * True when the tool's own input schema already declares `then_run`, in either schema
  * family. Such a tool owns that property: the schema transform leaves the declaration
  * alone, and the execute wrapper must not strip or reinterpret it (issue #48).

@@ -18,6 +18,7 @@ import {
   declaresThenRunProperty,
   extendToolInputWithThenRun,
   stripThenRun,
+  supportsThenRunProperty,
 } from "./then-run-schema.js";
 
 const MUTATION_TOOL_IDS = ["edit", "write", "patch"] as const;
@@ -73,7 +74,11 @@ function wrapToolExecute(
   // install a pass-through instead of the fusion wrapper (issue #48). Otherwise the
   // advertised value is stripped, a false skip notice is appended to the tool's own
   // result, and a value shaped like fusion input would run as a shell command.
-  const defersToHost = declaresThenRunProperty(tool.input);
+  //
+  // A schema family the plugin cannot read is a deferral too: `then_run` was never
+  // advertised for such a tool, so any value in its input belongs to the host.
+  const defersToHost =
+    declaresThenRunProperty(tool.input) || !supportsThenRunProperty(tool.input);
 
   tool.input = inputWithOptionalThenRun(toolId, tool.input, config);
 

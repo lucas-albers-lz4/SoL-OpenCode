@@ -192,4 +192,127 @@ describe("applyActionFusionToEditor transform replay", () => {
     expect(shellExecute).not.toHaveBeenCalled();
     expect(baseExecute).toHaveBeenCalledTimes(2);
   });
+
+  it("defers for the Effect-struct family, where the shipped mutation tools live", async () => {
+    // Issue #48 says the bug is shared with the Effect-struct branch, and OpenCode's own
+    // edit/write/patch are Effect structs: a deferral that only covered the JSON family
+    // would leave the one family the fix protects in practice untested.
+    const baseExecute = vi.fn(async (input: unknown) => ({
+      content: `host executed ${JSON.stringify(input)}`,
+    }));
+    const shellExecute = vi.fn(async () => ({ content: "shell", metadata: { exit: 0 } }));
+    const declaredInput = Schema.Struct({ path: Schema.String, then_run: Schema.String });
+    let stored = { ...baseEditTool(baseExecute), input: declaredInput as unknown as ToolInfo["input"] };
+
+    const editor = {
+      get: (id: string) => {
+        if (id === "shell") return { id: "shell", name: "shell", execute: shellExecute };
+        if (id === "edit") return { ...stored, execute: stored.execute };
+        return undefined;
+      },
+      update: (id: string, update: (tool: ToolInfo) => void) => {
+        if (id !== "edit") return;
+        const draft: ToolInfo = { ...stored, execute: stored.execute };
+        update(draft);
+        stored = { ...stored, ...draft, execute: draft.execute };
+      },
+      list: () => [stored],
+      add: () => {},
+      remove: () => {},
+      namespace: () => {},
+    };
+
+    applyActionFusionToEditor(editor, { cwd: "/tmp/project", patchThenRunInSchema: true });
+
+    // The struct's own declaration stands, and its value reaches the executor.
+    expect(stored.input).toBe(declaredInput);
+    const result = await stored.execute({ path: "src/a.ts", then_run: "host words" }, mockContext);
+    expect(baseExecute).toHaveBeenCalledWith({ path: "src/a.ts", then_run: "host words" }, mockContext);
+    expect(shellExecute).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("then_run:skipped");
+
+    await stored.execute({ path: "src/a.ts", then_run: { command: "echo host-shaped" } }, mockContext);
+    expect(shellExecute).not.toHaveBeenCalled();
+  });
+
+  it("keeps fusion working when a replay pass meets the property this plugin added", async () => {
+    // A host may replay the transform onto definitions it already wrapped. The second pass
+    // then sees the `then_run` property this plugin added, so the wrapper defers and calls
+    // the first pass's wrapper: fusion must still run once, and must not re-enter the
+    // per-file queue (a second fusion wrapper deadlocks here from the second pass on).
+    const baseExecute = vi.fn(async () => ({ content: "mutated" }));
+    const shellExecute = vi.fn(async () => ({ content: "shell", metadata: { exit: 0 } }));
+    let stored = baseEditTool(baseExecute);
+
+    const editor = {
+      get: (id: string) => {
+        if (id === "shell") return { id: "shell", name: "shell", execute: shellExecute };
+        if (id === "edit") return { ...stored, execute: stored.execute };
+        return undefined;
+      },
+      update: (id: string, update: (tool: ToolInfo) => void) => {
+        if (id !== "edit") return;
+        const draft: ToolInfo = { ...stored, execute: stored.execute };
+        update(draft);
+        stored = { ...stored, ...draft, execute: draft.execute };
+      },
+      list: () => [stored],
+      add: () => {},
+      remove: () => {},
+      namespace: () => {},
+    };
+
+    const config = { cwd: "/tmp/project", patchThenRunInSchema: true };
+    applyActionFusionToEditor(editor, config);
+    applyActionFusionToEditor(editor, config);
+
+    const result = await stored.execute(
+      { path: "src/a.ts", then_run: { command: "echo replay" } },
+      mockContext,
+    );
+
+    expect(baseExecute).toHaveBeenCalledTimes(1);
+    expect(shellExecute).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(result)).toContain("[then_run:succeeded]");
+  });
+
+  it("defers for a schema family the plugin cannot read", async () => {
+    // For a family the plugin cannot inspect, `then_run` was never advertised, so a value
+    // in the input is the host's: the wrapper must not strip it or run it as a command.
+    const baseExecute = vi.fn(async (input: unknown) => ({
+      content: `host executed ${JSON.stringify(input)}`,
+    }));
+    const shellExecute = vi.fn(async () => ({ content: "shell", metadata: { exit: 0 } }));
+    const foreignInput = { "~standard": { version: 1 }, vendor: "zod-like" };
+    let stored = { ...baseEditTool(baseExecute), input: foreignInput as unknown as ToolInfo["input"] };
+
+    const editor = {
+      get: (id: string) => {
+        if (id === "shell") return { id: "shell", name: "shell", execute: shellExecute };
+        if (id === "edit") return { ...stored, execute: stored.execute };
+        return undefined;
+      },
+      update: (id: string, update: (tool: ToolInfo) => void) => {
+        if (id !== "edit") return;
+        const draft: ToolInfo = { ...stored, execute: stored.execute };
+        update(draft);
+        stored = { ...stored, ...draft, execute: draft.execute };
+      },
+      list: () => [stored],
+      add: () => {},
+      remove: () => {},
+      namespace: () => {},
+    };
+
+    applyActionFusionToEditor(editor, { cwd: "/tmp/project", patchThenRunInSchema: true });
+
+    const result = await stored.execute(
+      { path: "src/a.ts", then_run: { command: "echo foreign" } },
+      mockContext,
+    );
+
+    expect(baseExecute).toHaveBeenCalledTimes(1);
+    expect(shellExecute).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("[then_run:succeeded]");
+  });
 });
