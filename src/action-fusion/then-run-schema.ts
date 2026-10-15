@@ -115,6 +115,18 @@ function thenRunEffectField(description: string) {
 }
 
 /**
+ * True when the tool's own input schema already declares `then_run`, in either schema
+ * family. Such a tool owns that property: the schema transform leaves the declaration
+ * alone, and the execute wrapper must not strip or reinterpret it (issue #48).
+ */
+export function declaresThenRunProperty(input: Tool.ValueSchema): boolean {
+  if (isEffectStruct(input)) return "then_run" in input.fields;
+  if (!isJsonObjectSchema(input)) return false;
+  const declared = input.properties;
+  return typeof declared === "object" && declared !== null && Object.hasOwn(declared, "then_run");
+}
+
+/**
  * Replace tool `input` with a shallow copy that adds optional `then_run`; never
  * mutates the caller's schema. Returns `input` unchanged when the schema already
  * declares `then_run` (mirrors the Effect-struct branch) and uses a shallow copy
@@ -126,7 +138,7 @@ export function extendToolInputWithThenRun(
   description: string,
 ): Tool.ValueSchema {
   if (isEffectStruct(input)) {
-    if ("then_run" in input.fields) return input;
+    if (declaresThenRunProperty(input)) return input;
     return input.mapFields((fields) => ({
       ...fields,
       then_run: thenRunEffectField(description),
@@ -142,8 +154,7 @@ export function extendToolInputWithThenRun(
     return input;
   }
 
-  const declared = input.properties;
-  if (typeof declared === "object" && declared !== null && Object.hasOwn(declared, "then_run")) {
+  if (declaresThenRunProperty(input)) {
     return input;
   }
 

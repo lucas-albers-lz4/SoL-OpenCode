@@ -14,7 +14,11 @@ import {
   executeMutationThenRunSinglePath,
   type ShellExecute,
 } from "./then-run.js";
-import { extendToolInputWithThenRun, stripThenRun } from "./then-run-schema.js";
+import {
+  declaresThenRunProperty,
+  extendToolInputWithThenRun,
+  stripThenRun,
+} from "./then-run-schema.js";
 
 const MUTATION_TOOL_IDS = ["edit", "write", "patch"] as const;
 
@@ -64,7 +68,19 @@ function wrapToolExecute(
 ): void {
   const currentExecute = tool.execute;
 
+  // A tool whose own schema declares `then_run` owns that property. Read the declaration
+  // before the transform, because the transform must then leave the schema alone, and
+  // install a pass-through instead of the fusion wrapper (issue #48). Otherwise the
+  // advertised value is stripped, a false skip notice is appended to the tool's own
+  // result, and a value shaped like fusion input would run as a shell command.
+  const defersToHost = declaresThenRunProperty(tool.input);
+
   tool.input = inputWithOptionalThenRun(toolId, tool.input, config);
+
+  if (defersToHost) {
+    tool.execute = async (input: unknown, context: ToolContext) => currentExecute(input, context);
+    return;
+  }
 
   tool.execute = async (input: unknown, context: ToolContext) => {
     const { mutationInput, thenRun, skipReason } = stripThenRun(

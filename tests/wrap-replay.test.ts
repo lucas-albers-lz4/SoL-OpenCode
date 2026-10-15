@@ -138,4 +138,58 @@ describe("applyActionFusionToEditor transform replay", () => {
     expect((stored.input as Schema.Struct<Schema.Struct.Fields>).fields).toHaveProperty("then_run");
     expect(input.fields).not.toHaveProperty("then_run");
   });
+
+  it("defers to a host tool that declares its own then_run", async () => {
+    // A host tool whose schema declares `then_run` owns that property: its value is
+    // advertised to the model, so the executor must receive it unchanged (issue #48).
+    const baseExecute = vi.fn(async (input: unknown) => ({
+      content: `host executed ${JSON.stringify(input)}`,
+    }));
+    const shellExecute = vi.fn(async () => ({ content: "shell", metadata: { exit: 0 } }));
+    let stored = {
+      ...baseEditTool(baseExecute),
+      input: {
+        type: "object" as const,
+        properties: {
+          path: { type: "string" as const },
+          then_run: { type: "string" as const },
+        },
+        required: ["path"],
+      },
+    };
+
+    const editor = {
+      get: (id: string) => {
+        if (id === "shell") return { id: "shell", name: "shell", execute: shellExecute };
+        if (id === "edit") return { ...stored, execute: stored.execute };
+        return undefined;
+      },
+      update: (id: string, update: (tool: ToolInfo) => void) => {
+        if (id !== "edit") return;
+        const draft: ToolInfo = { ...stored, execute: stored.execute };
+        update(draft);
+        stored = { ...stored, ...draft, execute: draft.execute };
+      },
+      list: () => [stored],
+      add: () => {},
+      remove: () => {},
+      namespace: () => {},
+    };
+
+    applyActionFusionToEditor(editor, { cwd: "/tmp/project", patchThenRunInSchema: true });
+
+    // The schema keeps the host's own property instead of the fusion one.
+    expect(stored.input).toHaveProperty("properties.then_run.type", "string");
+
+    const declared = await stored.execute({ path: "src/a.ts", then_run: "host words" }, mockContext);
+    expect(baseExecute).toHaveBeenCalledWith({ path: "src/a.ts", then_run: "host words" }, mockContext);
+    expect(shellExecute).not.toHaveBeenCalled();
+    // No fabricated skip notice on the host tool's own success result.
+    expect(JSON.stringify(declared)).not.toContain("then_run:skipped");
+
+    // A value shaped like fusion input is still the host's value, not a command to run.
+    await stored.execute({ path: "src/a.ts", then_run: { command: "echo host-shaped" } }, mockContext);
+    expect(shellExecute).not.toHaveBeenCalled();
+    expect(baseExecute).toHaveBeenCalledTimes(2);
+  });
 });
