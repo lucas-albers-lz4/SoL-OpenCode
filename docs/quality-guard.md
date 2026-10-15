@@ -47,35 +47,43 @@ expected direction until a measurement exists.
 | Fix | Unit assertion | Model-visible surface | Quality statement |
 |---|---|---|---|
 | #30 — path enumeration for delete and rename | `tests/patch-paths.test.ts`, `tests/then-run.test.ts` | A fused command now runs where it was dropped. A patch that touches no path reports a skip notice. | **Not inert.** It removes round-trips only when a model fuses. No landed run used `then_run`, so the volume claim stays unmeasured. |
-| #31 — malformed `then_run` is rejected visibly | `tests/then-run-validation.test.ts`, `tests/then-run.test.ts` | Schema keywords, plus a `[then_run:skipped]` marker with its reason. | Inert for well-formed calls. The schema cost is countable (below). The marker appears only when the model sends a malformed `then_run`. |
+| #31 — malformed `then_run` is rejected visibly | `tests/then-run-validation.test.ts`, `tests/then-run.test.ts` | A `[then_run:skipped]` marker with its reason. The serialized schema shows the `pattern` on the JSON family; the Effect serialization that the host sends for the built-in tools shows no keyword, so the runtime rejection carries the contract. | Inert for well-formed calls. The schema cost is countable (below). The marker appears only when the model sends a malformed `then_run`. |
 | #34 — recall chunk alignment and offset validation | `tests/observation-recall.test.ts` | A chunk starts at a character boundary. An invalid offset fails with a clean message instead of a raw `ERR_OUT_OF_RANGE`. | Inert for volume in normal paging. Boundaries move only for an offset that does not start a character, which previously decoded to replacement characters. |
-| #35 — `then_run` timeout validation | `tests/then-run-validation.test.ts` | Schema keywords, plus a visible rejection of an invalid timeout. | Inert for valid calls. The schema cost is countable (below). |
+| #35 — `then_run` timeout validation | `tests/then-run-validation.test.ts` | A visible rejection of an invalid timeout. On the Effect family the serialized `timeout` also admits the strings `Infinity`, `-Infinity` and `NaN`, which the runtime check rejects. | Inert for valid calls. The schema cost is countable (below). |
 
 ## The countable part: schema bytes
 
-The tool list is sent on every provider request. Every byte of the `then_run`
-description is therefore paid on every round-trip.
+The provider request carries the tool list. The model pays every byte of the
+`then_run` description on every round-trip.
 
-To measure the cost, extend an empty object schema with the shipped description and
-compare the JSON byte lengths:
+To measure the cost, extend the tool's own schema with the shipped description and
+compare the serialized byte lengths. Use an empty base for one stable number per tool:
 
-| Tool | Added bytes |
-|---|---|
-| `edit` | 480 |
-| `write` | 482 |
-| `patch` | 516 |
+| Tool | JSON schema family | Effect-struct family |
+|---|---|---|
+| `edit` | 480 | 572 |
+| `write` | 482 | 574 |
+| `patch` | 516 | 608 |
 
-A session that carries all three mutation tools therefore pays about 1.5 KiB per
-request, which is about 15% of the 10 KiB pack gate. `tests/schema-cost.test.ts`
-reads the shipped descriptions and pins those exact numbers plus a 600-byte ceiling
-per tool. The test fails when the shipped wording or keywords grow the text, so the
-growth becomes a decision and not an accident. A tool that lists other properties
-already measures one byte more per description (481 / 483 / 517); the table uses the
-empty-object recipe for one stable number per tool.
+The shipped mutation tools are Effect structs, so the `effect` column is the cost
+production pays: about 1.7 KiB per request for all three tools. The `json` column
+applies to a tool whose input is a JSON schema. A tool that already lists another
+property measures one byte more per description on the JSON family (481 / 483 / 517),
+so the table keeps the empty-base recipe.
+
+`tests/schema-cost.test.ts` reads the shipped descriptions and pins both columns, plus
+a 700-byte ceiling for one description. One assertion reads this table and compares it
+with those numbers. A wording or keyword change that moves a byte fails the suite until
+the table moves with it.
+
+The 10 KiB figure in the pack gate is the archive threshold that decides whether one
+tool **result** becomes a stored observation (`THRESHOLD_BYTES`). The schema text above
+is tool **definition** text that every request carries. Two different budgets: keep them
+apart.
 
 ## Where the numbers come from
 
 - [`benchmarks/README.md`](../benchmarks/README.md) — the measurement protocol and
   the method rules that make the numbers citable.
 - The "Measured behavior" section of the [README](../README.md) — the campaign
-  results, with the disclosures for the truncated and non-crossing pairs.
+  results, with the disclosures for the truncated and gate-crossing pairs.
