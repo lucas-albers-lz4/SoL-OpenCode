@@ -18,7 +18,8 @@ Add a row here before you merge a deviation. Cite the issue that decided it, and
 ### Host architecture — unavoidable
 
 A Pi extension **replaces** tool definitions, owns its TUI, and resolves Pi path syntax (`@`,
-`file://`). An OpenCode plugin only **transforms** the host's definitions through a `ToolEditor`.
+`file://`). An OpenCode plugin edits the host's definitions through a `ToolEditor` — `add`, `update`
+and `remove`, alongside `list`, `get` and `namespace` — and owns no TUI.
 This difference forces the port-only modules and the port-only shapes:
 
 | Port-only code | Why it must exist |
@@ -27,9 +28,11 @@ This difference forces the port-only modules and the port-only shapes:
 | `src/action-fusion/then-run-schema.ts` | The plugin extends a schema it does not own. |
 | `src/deps/opencode-plugin-types.ts`, `src/options.ts` | OpenCode plugin types and options. |
 | `then-run.ts`: split executors, `mapShellResultToObservation`, `appendThenRunSkipNotice` | OpenCode result and shell shapes; `patch` needs a multi-path executor. |
-| `observation-pack/`: `session-index*`, `archive-gate`, `http-rewrite`, `runtime-path` | Pi hands an extension its session directory and a `context` hook; OpenCode gives neither, so the port needs its own index, archive gate and path resolution. Upstream's `observation.ts` carries no reducer import — the reducer is a separate upstream extension this port does not carry. |
+| `observation-pack/`: `session-index*`, `archive-gate`, `http-rewrite`, `runtime-path` | Pi hands an extension its session directory, and its `context` hook can change what the provider receives. This host has the hook, but mutating its messages does not reach the provider body (`docs/spike-context.md`), so the port needs its own index, archive gate and path resolution. Upstream's `observation.ts` carries no reducer import — the reducer is a separate upstream extension this port does not carry. |
 
-Upstream extensions with no port: `evidence-preserving-reducer`, `online-context-compact`.
+Upstream artifacts with no port: the append-only observation ledger
+(`observation-pack/ledger.ts`; the port keeps ledger pointers only and writes no ledger file), and the
+extensions `evidence-preserving-reducer` and `online-context-compact`.
 
 ### Upstream defects this port fixes
 
@@ -37,7 +40,7 @@ Upstream extensions with no port: `evidence-preserving-reducer`, `online-context
 |---|---|---|---|
 | Hardlink aliasing (#36) | `canonicalQueueKey` keys the canonical path only, so two hardlinked names interleave | inode key added | merged |
 | Dangling-symlink aliasing (#56) | the `ENOENT` ancestor walk gives the link and its missing target disjoint keys | link-chain keys | merged (#58) |
-| `ELOOP`, or any other unresolvable name, out of key derivation (decided in #58's review, part of #56's change) | `canonicalQueueKey` throws for a cyclic link; a fused `write` reaches it through `executeMutationThenRunSinglePath` | falls back to the name key | merged (#58) |
+| `ELOOP`, or any other unresolvable name, out of key derivation (decided in #58's review, part of #56's change) | `canonicalQueueKey` throws for a cyclic link; a fused `write` reaches key derivation through `executeMutationThenRun` | falls back to the name key | merged (#58) |
 
 Before #58, the default branch kept a dangling symlink on its own path key (`src/action-fusion/file-queue.ts`
 said so), and a cyclic link made the queue throw. Both landed in #58, so a link and its missing target
@@ -56,7 +59,8 @@ character-alignment or U+FFFD promise either, so the promise in this port's comm
 |---|---|---|
 | Recall start-snap and offset validation (#34) | A page never starts inside a character, and a start inside one would decode as a replacement character. | merged |
 | Fusion runs for `patch` (#30) | Upstream composes Pi's `edit` and `write` only, and its `file-queue.ts` has no patch path, so it takes no position on fusion for a patch tool. This host has one, so the port adds fusion to it and enumerates the written paths with `Patch.parse`. A port addition: chosen, not forced. | merged |
-| The recall placeholder drops upstream's instruction (#26) | Upstream's placeholder tells the model to call `obs_recall` for the full text. This port deletes that instruction and pins the deletion in `tests/observation-pack.test.ts`. Decided on measurement: the imperative wording measured +128 % round-trips against its control arm, and the shipped neutral wording replaced it at ~1.5× the control's round-trips (median 14 → 21) against the imperative arm's ~2.4× (README, "Measured behavior"). | merged |
+| The recall placeholder drops upstream's instruction (#26) | Upstream's placeholder tells the model to call `obs_recall` with the observation id and continue at the returned `next_offset`. This port deletes that instruction and pins the deletion in `tests/observation-pack.test.ts`. Decided on measurement: the imperative wording measured +128 % round-trips against its control arm (recorded in `tests/observation-pack.test.ts` from issue #27's B1 arm), and the shipped neutral wording replaced it at ~1.5× the control's round-trips (median 14 → 21) against the imperative arm's ~2.4× (14 → 33) — "the wording buys round-trips, not only context" (README, "Measured behavior"). | merged |
+| Re-packing the recall tool's own output | **Refuse it.** Upstream's projection loop filters on `isPureTextResult` alone, so a recall page over the threshold is packed again. This port skips `obs_recall` output (`archive-gate.ts`), and `tests/observation-pack.test.ts` pins that. Reachable here: a recall page is capped at 15,872 bytes, above the 10 KiB threshold. | merged |
 | A malformed `then_run` is rejected visibly (#31, #35) | Upstream reserves `then_run` for itself and hands a value it did not shape straight to the shell, so nothing rejects it in the model's view. Here the plugin adds the property to the tool's own schema, so the codec rejects most malformed shapes before `execute`, including the strings that the serialized `timeout` permits. What the codec admits — a numeric `Infinity` — the runtime check rejects, and a codec rejection would replace the marker with a decode error. The runtime check therefore carries the contract the model reads. | merged |
 | Packing a payload that carries a Pi evidence receipt | Upstream refuses to pack a payload whose text carries an evidence receipt line (`containsReducerReceipt`); this port gates on size alone, so a `read` or `cat` of a Pi session file is excerpted here. This host has no receipt concept of its own. Whether such a payload should be packed is undecided. | undecided |
 
@@ -67,6 +71,7 @@ character-alignment or U+FFFD promise either, so the promise in this port's comm
 | The #30 volume claim | A measured arm: `benchmarks/` off and on, median and spread. Treat it as unmeasured until it lands. `docs/quality-guard.md` records that, and that page is on the default branch (#57). |
 | The quality guard page and its cost pin (#44) | `docs/quality-guard.md` and `tests/schema-cost.test.ts`: the recorded statements, and the pinned schema cost. No upstream counterpart. Merged (#57). |
 | Whether a payload carrying a Pi evidence receipt should be packed | This port packs it on size alone; upstream refuses (`containsReducerReceipt`). Decide, or record why the port keeps packing it. |
+| `~` expansion in the queue | Establish whether the host's mutation tools resolve a spelled `~/x` through the file-access resolver. If they do, key the resolved name; if not, record why the spelled name is the right key. |
 
 ## Aligned against the host, not against upstream
 
@@ -75,8 +80,8 @@ convention.
 
 | Item | Decision | Status |
 |---|---|---|
-| A host tool that declares its own `then_run` | **Follow the declaration.** Upstream replaces tool definitions and reserves `then_run` for itself, so a declared value belongs to the host. The schema side has left the host's property alone since #42; the execute side must pass the value through instead of reinterpreting it. | merged: schema side (#42), execute side (#59, issue #48) |
+| A host tool that declares its own `then_run` | **Follow the declaration.** Upstream replaces tool definitions and reserves `then_run` for itself, so a declared value belongs to the host. The schema side has left the host's property alone since #42; the execute side must pass the value through instead of reinterpreting it. | merged (#59, and #47 for the schema side; issue #48) |
 | Shell drive spellings (`/c/…`, `/c:/…`, `/mnt/c/…`, `/cygdrive/c/…`) | **Follow the host.** Apply `@opencode/util` `FSUtil.windowsPath` in `resolveMutationPath` before `resolve`, instead of copying upstream's resolver. Otherwise one file holds two queue keys on Windows. | merged (#62, issue #61) |
 | `@` and `file://` path syntax | **Stay dropped.** Pi-only syntax; the host does not use it. | — |
-| `~` expansion | **Stay dropped in the queue.** `@opencode/util` expands no home directory, and the queue must key the name the operation uses. The host's own file-access resolver does expand `~` (CLI bundle), so a mutation that spells `~/x` is keyed on the spelled name. Known gap, unverified for tool inputs specifically. | — |
+| `~` expansion | **Dropped in the queue, and not settled.** `@opencode/util` expands no home directory, but the host's own file-access resolver does expand `~` (CLI bundle). If a mutation tool routes a spelled `~/x` through that resolver, the queue keys a name the kernel never sees and two names for one file interleave — the class the rows above fix. Whether the mutation tools route there is unverified. | undecided |
 | Unicode-space folding | **Stay dropped.** The host folds no spaces when it resolves a path: `FSUtil.windowsPath` and the file-access resolver fold nothing. One `read`-tool fallback does fold U+00A0 and U+202F, which is not path resolution. Folding here can only merge two names onto one key, which over-serializes; it adds no correctness. | — |
