@@ -6,7 +6,8 @@ This page records every point where this port does not follow SoL-Pi, and why.
 
 **Read the status column.** *Merged* rows describe code on the default branch. *In review* rows
 describe work that is not there yet: read the code for what the port does today, this page for the
-decision, and the named PR for the change.
+decision, and the named PR for the change. The column is a snapshot, not a live view: a later merge
+moves a row, so check the default branch before you rely on one.
 
 ## The rule
 
@@ -29,7 +30,7 @@ This difference forces the port-only modules and the port-only shapes:
 | `src/action-fusion/then-run-schema.ts` | The plugin extends a schema it does not own. |
 | `src/deps/opencode-plugin-types.ts`, `src/options.ts` | OpenCode plugin types and options. |
 | `then-run.ts`: split executors, `mapShellResultToObservation`, `appendThenRunSkipNotice` | OpenCode result and shell shapes; `patch` needs a multi-path executor. |
-| `observation-pack/`: `session-index*`, `archive-gate`, `http-rewrite`, `runtime-path` | Upstream's `observation.ts` depends on `evidence-preserving-reducer`, which this port does not carry. |
+| `observation-pack/`: `session-index*`, `archive-gate`, `http-rewrite`, `runtime-path` | Pi hands an extension its session directory and a `context` hook; OpenCode gives neither, so the port needs its own index, archive gate and path resolution. Upstream's `observation.ts` carries no reducer import — the reducer is a separate upstream extension this port does not carry. |
 
 Upstream extensions with no port: `evidence-preserving-reducer`, `online-context-compact`.
 
@@ -57,14 +58,16 @@ character-alignment or U+FFFD promise either, so the promise in this port's comm
 |---|---|---|
 | Recall start-snap and offset validation (#34) | A page never starts inside a character, and a start inside one would decode as a replacement character. | merged |
 | Fusion runs for `patch` (#30) | Upstream drops fusion for `patch`, because it cannot enumerate written paths. This port enumerates them with `Patch.parse`. A deliberate product divergence. | merged |
-| A malformed `then_run` is rejected visibly (#31, #35) | Upstream drops the value silently. The plugin advertises the property in the schema, so a malformed value must be visible to the model. | merged |
+| A malformed `then_run` is rejected visibly (#31, #35) | Upstream reserves `then_run` for itself and hands a value it did not shape straight to the shell, so nothing rejects it in the model's view. The plugin adds the property to a schema the host owns, the host validates nothing there, so the rejection has to be visible in the port. | merged |
+| Packing a payload that carries a Pi evidence receipt | Upstream refuses to pack a payload whose text carries an evidence receipt line (`containsReducerReceipt`); this port gates on size alone, so a `read` or `cat` of a Pi session file is excerpted here. This host has no receipt concept of its own. Whether such a payload should be packed is undecided. | undecided |
 
 ## Owed work
 
 | Item | Owed |
 |---|---|
-| The #30 volume claim | A measured arm: `benchmarks/` off and on, median and spread. Treat it as unmeasured until it lands. `docs/quality-guard.md` records that, and arrives with #44 in review (#57). |
-| The quality guard page and its cost pin (#44) | `docs/quality-guard.md` and `tests/schema-cost.test.ts`: the recorded statements, and the pinned schema cost. No upstream counterpart. Arrives with #44, in review (#57). |
+| The #30 volume claim | A measured arm: `benchmarks/` off and on, median and spread. Treat it as unmeasured until it lands. `docs/quality-guard.md` records that, and that page is on the default branch (#57). |
+| The quality guard page and its cost pin (#44) | `docs/quality-guard.md` and `tests/schema-cost.test.ts`: the recorded statements, and the pinned schema cost. No upstream counterpart. Merged (#57). |
+| Whether a payload carrying a Pi evidence receipt should be packed | This port packs it on size alone; upstream refuses (`containsReducerReceipt`). Decide, or record why the port keeps packing it. |
 
 ## Aligned against the host, not against upstream
 
@@ -74,7 +77,7 @@ convention.
 | Item | Decision | Status |
 |---|---|---|
 | A host tool that declares its own `then_run` | **Follow the declaration.** Upstream replaces tool definitions and reserves `then_run` for itself, so a declared value belongs to the host. The schema side has left the host's property alone since #42; the execute side must pass the value through instead of reinterpreting it. | merged: schema side (#42), execute side (#59, issue #48) |
-| Shell drive spellings (`/c/…`, `/mnt/c/…`, `/cygdrive/c/…`) | **Follow the host.** Apply `@opencode/util` `FSUtil.windowsPath` in `resolveMutationPath` before `resolve`, instead of copying upstream's resolver. Otherwise one file holds two queue keys on Windows. | in review (#62, issue #61) |
+| Shell drive spellings (`/c/…`, `/c:/…`, `/mnt/c/…`, `/cygdrive/c/…`) | **Follow the host.** Apply `@opencode/util` `FSUtil.windowsPath` in `resolveMutationPath` before `resolve`, instead of copying upstream's resolver. Otherwise one file holds two queue keys on Windows. | merged (#62, issue #61) |
 | `@` and `file://` path syntax | **Stay dropped.** Pi-only syntax; the host does not use it. | — |
 | `~` expansion | **Stay dropped in the queue.** `@opencode/util` expands no home directory, and the queue must key the name the operation uses. The host's own file-access resolver does expand `~` (CLI bundle), so a mutation that spells `~/x` is keyed on the spelled name. Known gap, unverified for tool inputs specifically. | — |
 | Unicode-space folding | **Stay dropped.** The host folds no spaces. Folding can only merge two names onto one key, which over-serializes; it adds no correctness. | — |
