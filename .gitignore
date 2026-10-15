@@ -2,3 +2,10 @@ node_modules/
 dist/
 *.tsbuildinfo
 .opencode/
+
+# Python harness caches
+__pycache__/
+*.pyc
+
+# A/B harness output (ab-run.py --out)
+ab-*/
