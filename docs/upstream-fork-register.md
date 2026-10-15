@@ -63,5 +63,5 @@ convention.
 | A host tool that declares its own `then_run` (#48) | **Follow the declaration.** Upstream replaces tool definitions and reserves `then_run` for itself, so a declared value belongs to the host. The port defers and passes the value through unchecked. |
 | Shell drive spellings (`/c/…`, `/mnt/c/…`, `/cygdrive/c/…`) | **Follow the host.** Apply `@opencode/util` `FSUtil.windowsPath` in `resolveMutationPath` (#61), instead of copying upstream's resolver. Otherwise one file holds two queue keys on Windows. |
 | `@` and `file://` path syntax | **Stay dropped.** Pi-only syntax; the host does not use it. |
-| `~` expansion | **Stay dropped.** `@opencode/util` expands no home directory, so expanding it in the queue would key a file the mutation does not write. |
+| `~` expansion | **Stay dropped in the queue.** `@opencode/util` expands no home directory, and the queue must key the name the operation uses. The host's own file-access resolver does expand `~` (CLI bundle), so a mutation that spells `~/x` is keyed on the spelled name. Known gap, and unverified for tool inputs specifically. |
 | Unicode-space folding | **Stay dropped.** The host folds no spaces. Folding can only merge two names onto one key, which over-serializes; it adds no correctness. |
