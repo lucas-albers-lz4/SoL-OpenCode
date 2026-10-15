@@ -133,7 +133,7 @@ describe("applyActionFusionToEditor transform replay", () => {
       namespace: () => {},
     };
 
-    applyActionFusionToEditor(editor, { cwd: "/tmp/project-declared-json", patchThenRunInSchema: true });
+    applyActionFusionToEditor(editor, { cwd: "/tmp/project-struct-extend", patchThenRunInSchema: true });
     expect(Schema.isSchema(stored.input)).toBe(true);
     expect((stored.input as Schema.Struct<Schema.Struct.Fields>).fields).toHaveProperty("then_run");
     expect(input.fields).not.toHaveProperty("then_run");
@@ -176,7 +176,7 @@ describe("applyActionFusionToEditor transform replay", () => {
       namespace: () => {},
     };
 
-    applyActionFusionToEditor(editor, { cwd: "/tmp/project-declared-struct", patchThenRunInSchema: true });
+    applyActionFusionToEditor(editor, { cwd: "/tmp/project-declared-json", patchThenRunInSchema: true });
 
     // The schema keeps the host's own property instead of the fusion one.
     expect(stored.input).toHaveProperty("properties.then_run.type", "string");
