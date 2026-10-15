@@ -126,5 +126,20 @@ describe("model-visible schema cost", () => {
       const row = `| \`${tool}\` | ${String(EXPECTED_ADDED_BYTES.json[tool])} | ${String(EXPECTED_ADDED_BYTES.effect[tool])} |`;
       expect(page).toContain(row);
     }
+
+    // The split paragraph is the part a maintainer quotes, so it is linked too. Without this, a
+    // page-only edit of the decomposition — or a constant-only edit — leaves the suite green.
+    // Whitespace is flattened first, so a re-wrapped paragraph does not defeat the check.
+    const flat = page.replaceAll(/\s+/g, " ");
+
+    expect(flat).toContain(
+      `accounts for ${String(EXPECTED_FIXED_BYTES.effect)} bytes of the Effect column and ${String(EXPECTED_FIXED_BYTES.json)} of the JSON column`,
+    );
+    expect(flat).toContain(
+      `The three descriptions account for the rest: ${Object.values(EXPECTED_DESCRIPTION_BYTES).join(" / ")} bytes`,
+    );
+    expect(flat).toContain(
+      `leaves about ${String(CEILING_BYTES - EXPECTED_FIXED_BYTES.json)} bytes of text on the JSON column and ${String(CEILING_BYTES - EXPECTED_FIXED_BYTES.effect)} on the Effect column`,
+    );
   });
 });

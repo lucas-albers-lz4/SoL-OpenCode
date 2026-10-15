@@ -92,8 +92,8 @@ includes a change to an Effect-only annotation that a schema-side copy would mis
 
 The 10 KiB figure in the pack gate is the archive threshold that decides whether one
 tool **result** becomes a stored observation (`THRESHOLD_BYTES`). The schema text above
-is tool **definition** text that every request carries. Two different budgets: keep them
-apart.
+is tool **definition** text that every provider round-trip carries. Two different
+budgets: keep them apart.
 
 ## Where the numbers come from
 
