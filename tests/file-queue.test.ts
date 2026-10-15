@@ -288,8 +288,14 @@ describe("resolveMutationPath", () => {
   });
 
   it("leaves a non-Windows path as the plain resolution", () => {
-    // Off Windows the host conversion is a no-op, so this must not change the workspace path.
+    // Off Windows the host conversion is a no-op, so neither an ordinary path nor a drive-spelled
+    // one changes. The drive-spelled case is the discriminating one: it fails if the host's
+    // conversion is ever reimplemented inline without its `win32` gate, because then this host
+    // rewrites `/c/src/app.ts` to `C:/src/app.ts` and keys a path the workspace does not contain.
     expect(resolveMutationPath("/workspace", "src/a.ts")).toBe(resolve("/workspace", "src/a.ts"));
+    expect(resolveMutationPath("/workspace", "/c/src/app.ts")).toBe(
+      resolve("/workspace", "/c/src/app.ts"),
+    );
   });
 });
 
