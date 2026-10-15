@@ -4,14 +4,24 @@
  * SPDX-License-Identifier: MIT
  */
 
+import { FSUtil } from "@opencode/util/fs-util";
 import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 
 const queueTails = new Map<string, Promise<void>>();
 
-/** OpenCode mutation tools use `path` relative to the workspace directory (no Pi `@` / `file://` resolver). */
+/**
+ * OpenCode mutation tools use `path` relative to the workspace directory (no Pi `@` /
+ * `file://` resolver). The host still converts the drive spellings a shell hands it before
+ * it resolves a path — `@opencode/util` `FSUtil.windowsPath`, `win32` only, covering `/c/…`,
+ * `/c:/…`, `/mnt/c/…` and `/cygdrive/c/…`. Apply the host's own conversion, so the queue and the hash
+ * guard address the file the mutation writes: otherwise `/c/src/app.ts` and `C:/src/app.ts`
+ * name one file and hold two queue keys, which lets two fused operations interleave (issue
+ * #61). Do not copy upstream SoL-Pi's resolver: it also strips `@`, expands `~` and folds
+ * Unicode spaces, which are Pi behaviours this host does not share.
+ */
 export function resolveMutationPath(cwd: string, path: string): string {
-  return resolve(cwd, path);
+  return resolve(cwd, FSUtil.windowsPath(path));
 }
 
 function isMissingPathError(error: unknown): boolean {
