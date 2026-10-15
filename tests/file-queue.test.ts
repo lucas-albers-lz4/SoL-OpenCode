@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { link, mkdtemp, rename, symlink, writeFile } from "node:fs/promises";
+import { mkdir, link, mkdtemp, realpath, rename, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -347,6 +347,29 @@ describe("symlink queue keys", () => {
     expect(await peakConcurrency([linkPath, target])).toBe(1);
   });
 
+  it("resolves a relative link target against the link directory the kernel sees", async () => {
+    // A relative target walks out of the link's own directory. The kernel resolves that directory
+    // through any symlink in its path, so `blink/f.txt -> ../../target.txt` names the same file as
+    // `target.txt`. A lexical resolve walks `..` against the spelled directory instead and names a
+    // file outside the workspace, so the two names hold disjoint keys and interleave (issue #56's
+    // failure mode, reached through the walk this PR adds).
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-dotdot-"));
+    const nest = join(dir, "deep", "nest");
+    await mkdir(nest, { recursive: true });
+    const target = join(dir, "target.txt");
+    await symlink("../../target.txt", join(nest, "f.txt"));
+    await symlink(nest, join(dir, "blink"));
+    const throughLink = join(dir, "blink", "f.txt");
+
+    // Neither name exists yet, so no inode key exists either: only the path keys can hold the two
+    // names together. That is exactly the condition of issue #56.
+    expect(await peakConcurrency([throughLink, target])).toBe(1);
+
+    // The kernel agrees they are one file: writing through the chain creates `dir/target.txt`.
+    await writeFile(throughLink, "x\n", "utf8");
+    expect(await realpath(throughLink)).toBe(await realpath(target));
+  });
+
   it("does not hang on a symlink cycle and still shares the queue", async () => {
     const dir = await mkdtemp(join(tmpdir(), "fused-queue-cycle-"));
     const first = join(dir, "a.txt");
@@ -369,4 +392,3 @@ describe("symlink queue keys", () => {
     expect(await peakConcurrency([firstLink, secondLink])).toBe(2);
   });
 });
-

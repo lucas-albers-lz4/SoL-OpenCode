@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { mkdtemp, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readlink, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,15 +11,17 @@ import { withFusedFileQueue } from "../src/action-fusion/file-queue.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, stat: vi.fn(actual.stat) };
+  return { ...actual, stat: vi.fn(actual.stat), readlink: vi.fn(actual.readlink) };
 });
 
 const mockedStat = vi.mocked(stat);
+const mockedReadlink = vi.mocked(readlink);
 
 type StatResult = Awaited<ReturnType<typeof stat>>;
 
 afterEach(() => {
   mockedStat.mockReset();
+  mockedReadlink.mockReset();
 });
 
 async function twoExistingPaths(): Promise<readonly [string, string]> {
@@ -76,5 +78,20 @@ describe("queue keys from unusual stat results", () => {
     );
 
     expect(await peakConcurrency([first, second])).toBe(2);
+  });
+
+  it("ends the walk on the name key when readlink fails", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fused-queue-readlink-"));
+    const target = join(dir, "target.txt");
+    const linkPath = join(dir, "link.txt");
+    await writeFile(target, "x\n", "utf8");
+    await symlink(target, linkPath);
+    // `lstat` reported a link, so a `readlink` failure here is a race, a permission problem, or a
+    // limit. Key derivation must not turn that into a plugin error before the host tool reports its
+    // own. The pair then degrades to the name keys: weaker isolation, never a thrown error — and
+    // without this fixture a rethrow stays green through every other test in the suite.
+    mockedReadlink.mockRejectedValue(Object.assign(new Error("invalid argument"), { code: "EINVAL" }));
+
+    await expect(withFusedFileQueue(linkPath, async () => "ran")).resolves.toBe("ran");
   });
 });

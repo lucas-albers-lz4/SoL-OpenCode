@@ -112,7 +112,19 @@ async function linkChain(resolvedPath: string): Promise<string[]> {
       return chain;
     }
 
-    current = resolve(dirname(current), target);
+    // The kernel resolves a relative target against the link's directory **as it really is**,
+    // not as the name spells it. A lexical resolve of `../../target.txt` through a directory
+    // symlink can name one file two ways, and the two names then hold disjoint keys — issue
+    // #56's failure mode again. Resolve the directory first. When it cannot be resolved, keep
+    // the lexical name: the file it points at does not exist yet either way.
+    // Cost: one `lstat` per acquisition, plus `readlink` and `realpath` per link hop.
+    let linkDirectory = dirname(current);
+    try {
+      linkDirectory = await realpath(linkDirectory);
+    } catch (error) {
+      if (!isUnresolvablePathError(error)) throw error;
+    }
+    current = resolve(linkDirectory, target);
     // A repeated name ends the walk. The depth bound alone would also stop a cycle, but
     // the early exit keeps it at two `lstat` calls instead of the full bound.
     if (seen.has(current)) return chain;
