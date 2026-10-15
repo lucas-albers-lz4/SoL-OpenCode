@@ -36,10 +36,15 @@ extensions `evidence-preserving-reducer` and `online-context-compact`.
 
 ### Upstream defects this port fixes
 
+The queue is also structurally different. Upstream's `canonicalQueueKey` returns one string; this
+port's `queueKeysFor` returns a set — the path key always, plus the inode key when the file exists — so
+a spelled name and an aliased name for one file exclude each other. Every aliasing row below follows
+from that design, and a future one will too: issue #65's `..` through a symlinked directory.
+
 | Defect | Upstream behaviour | This port | Status |
 |---|---|---|---|
 | Hardlink aliasing (#36) | `canonicalQueueKey` keys the canonical path only, so two hardlinked names interleave | inode key added | merged |
-| Dangling-symlink aliasing (#56) | the `ENOENT` ancestor walk gives the link and its missing target disjoint keys | link-chain keys | merged (#58) |
+| Dangling-symlink aliasing (#56) | the missing-path ancestor walk (`ENOENT` or `ENOTDIR`) gives the link and its missing target disjoint keys | link-chain keys | merged (#58) |
 | `ELOOP`, or any other unresolvable name, out of key derivation (decided in #58's review, part of #56's change) | `canonicalQueueKey` throws for a cyclic link; a fused `write` reaches key derivation through `executeMutationThenRun` | falls back to the name key | merged (#58) |
 
 Before #58, the default branch kept a dangling symlink on its own path key (`src/action-fusion/file-queue.ts`
@@ -49,8 +54,11 @@ now share a queue and an unresolvable name falls back to its name key.
 ### One claim retracted, not a defect fixed
 
 The recall page does not advance when no character fits the window (#55). Upstream returns the same
-page, and the shape needs `maxBytes` of 3 or less — the shipped caller passes 15,872. Upstream makes no
-character-alignment or U+FFFD promise either, so the promise in this port's comment was the defect.
+page. The shape needs `maxBytes` of 3 or less, **or a run of `maxBytes` or more continuation bytes at
+the offset** — so well-formed UTF-8 cannot reach it, and a damaged payload can: upstream's
+`readRecallChunk` returns a non-advancing page at the shipped cap of 15,872 bytes when the bytes ahead
+are continuation bytes. Upstream makes no character-alignment or U+FFFD promise either, so the promise
+in this port's comment was the defect.
 #60 corrected the contract, and it is **merged**: the default branch no longer carries the promise.
 
 ## Deviations kept on purpose
@@ -80,7 +88,7 @@ convention.
 
 | Item | Decision | Status |
 |---|---|---|
-| A host tool that declares its own `then_run` | **Follow the declaration.** Upstream replaces tool definitions and reserves `then_run` for itself, so a declared value belongs to the host. The schema side has left the host's property alone since #42; the execute side must pass the value through instead of reinterpreting it. | merged (#59, and #47 for the schema side; issue #48) |
+| A host tool that declares its own `then_run` | **Follow the declaration.** Upstream replaces tool definitions and reserves `then_run` for itself, so a declared value belongs to the host. The schema side has left the host's property alone since issue #42 (landed in #47); the execute side must pass the value through instead of reinterpreting it. | merged (#59, and #47 for the schema side; issue #48) |
 | Shell drive spellings (`/c/…`, `/c:/…`, `/mnt/c/…`, `/cygdrive/c/…`) | **Follow the host.** Apply `@opencode/util` `FSUtil.windowsPath` in `resolveMutationPath` before `resolve`, instead of copying upstream's resolver. Otherwise one file holds two queue keys on Windows. | merged (#62, issue #61) |
 | `@` and `file://` path syntax | **Stay dropped.** Pi-only syntax; the host does not use it. | — |
 | `~` expansion | **Dropped in the queue, and not settled.** `@opencode/util` expands no home directory, but the host's own file-access resolver does expand `~` (CLI bundle). If a mutation tool routes a spelled `~/x` through that resolver, the queue keys a name the kernel never sees and two names for one file interleave — the class the rows above fix. Whether the mutation tools route there is unverified. | undecided |
