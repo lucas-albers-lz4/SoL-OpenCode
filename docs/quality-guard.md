@@ -61,20 +61,26 @@ compare the serialized byte lengths. Use an empty base for one stable number per
 
 | Tool | JSON schema family | Effect-struct family |
 |---|---|---|
-| `edit` | 480 | 572 |
-| `write` | 482 | 574 |
-| `patch` | 516 | 608 |
+| `edit` | 480 | 534 |
+| `write` | 482 | 536 |
+| `patch` | 516 | 570 |
 
-The shipped mutation tools are Effect structs, so the `effect` column is the cost
-production pays: about 1.7 KiB per request for all three tools. The `json` column
-applies to a tool whose input is a JSON schema. A tool that already lists another
-property measures one byte more per description on the JSON family (481 / 483 / 517),
-so the table keeps the empty-base recipe.
+Both columns extend a tool's own schema with the shipped description and compare serialized byte
+lengths. The JSON column uses an empty object base, because those tools are not the shipped ones.
+The Effect column uses a base with one string field, the shape a real tool input has: it is the cost
+a request pays for one description, about 1.6 KiB for all three tools.
 
-`tests/schema-cost.test.ts` reads the shipped descriptions and pins both columns, plus
-a 700-byte ceiling for one description. One assertion reads this table and compares it
-with those numbers. A wording or keyword change that moves a byte fails the suite until
-the table moves with it.
+Do not read the Effect column off an empty struct base. That recipe reports 38 bytes more per tool
+(572 / 574 / 608), because an empty struct serializes to `{"not":{"type":"null"}}` while the extended
+document carries the full object skeleton. No real request pays that difference for a description.
+The delta is stable across the non-empty bases measured here: one field and three fields both read
+534 / 536 / 570. On the JSON family, a tool that already lists another property measures one byte
+more per description (481 / 483 / 517), so that column keeps the empty-base recipe for one stable
+number per tool.
+
+`tests/schema-cost.test.ts` reads the shipped descriptions and pins both columns, plus a 700-byte
+ceiling for one description. One assertion reads this table and compares it with those numbers. A
+wording or keyword change that moves a byte fails the suite until the table moves with it.
 
 The 10 KiB figure in the pack gate is the archive threshold that decides whether one
 tool **result** becomes a stored observation (`THRESHOLD_BYTES`). The schema text above
