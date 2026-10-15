@@ -154,6 +154,10 @@ plugin arm.
 See [`benchmarks/README.md`](./benchmarks/README.md) for the protocol, the
 method rules that make these numbers citable, and how to regenerate them.
 
+The merge rule for changes that alter what the model sees — schema text, result
+text, or archive chunk boundaries — is in
+[`docs/quality-guard.md`](./docs/quality-guard.md).
+
 ## Provenance
 
 Portable algorithms are copied from SoL-Pi (MIT, NVIDIA copyright). Reference commit: `e1a586af0ad8956f42ae5b26bba20e48fbf30e00`.
