@@ -21,11 +21,9 @@ const CEILING_BYTES = 700;
 
 /**
  * Byte cost of one shipped description, per schema family. The JSON family uses an empty object
- * base. The Effect family uses a one-field struct base, because an empty struct base adds 38 bytes
- * of object boilerplate per tool that no real request pays for the description: an empty struct
- * serializes to `{"not":{"type":"null"}}`, while the extended document carries the full object
- * skeleton. The delta is stable across the non-empty bases measured here — one field and three
- * fields both read 534 / 536 / 570.
+ * base. The Effect family uses a one-field struct base, the shape a real tool input has: the two
+ * bases disagree by about 38 bytes per tool, and the delta is stable across the non-empty bases
+ * measured here (one field and three fields both read 534 / 536 / 570).
  */
 const EXPECTED_ADDED_BYTES = {
   json: { edit: 480, write: 482, patch: 516 },

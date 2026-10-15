@@ -21,8 +21,8 @@ Before you merge a model-visible change, add two items.
      round-trips, measure both arms (off and on) with
      [`benchmarks/`](../benchmarks/README.md). Report the median and the spread.
      Do not quote a single run.
-   - If the change cannot alter volume or round-trips, state why. Give the count
-     when you can count it.
+   - If the change cannot alter volume or round-trips, state why. When you can
+     count it, give the count.
 
 A green `npm test` is not the quality proof. The suite proves behavior only.
 
@@ -46,18 +46,23 @@ expected direction until a measurement exists.
 
 | Fix | Unit assertion | Model-visible surface | Quality statement |
 |---|---|---|---|
-| #30 — path enumeration for delete and rename | `tests/patch-paths.test.ts`, `tests/then-run.test.ts` | A fused command now runs where it was dropped. A patch that touches no path reports a skip notice. | **Not inert.** It removes round-trips only when a model fuses. No landed run used `then_run`, so the volume claim stays unmeasured. |
-| #31 — malformed `then_run` is rejected visibly | `tests/then-run-validation.test.ts`, `tests/then-run.test.ts` | A `[then_run:skipped]` marker with its reason. The serialized schema shows the `pattern` on the JSON family; the Effect serialization that the host sends for the built-in tools shows no keyword, so the runtime rejection carries the contract. | Inert for well-formed calls. The schema cost is countable (below). The marker appears only when the model sends a malformed `then_run`. |
+| #30 — path enumeration for delete and rename | `tests/patch-paths.test.ts`, `tests/then-run.test.ts` | A fused command now runs where the plugin previously dropped it. A patch that touches no path reports a skip notice. | **Not inert, and the direction depends on the comparison.** Against the base commit, the command output or the skip notice adds bytes where the result was plain success. Against a model that would have issued the same command unfused, it removes a round-trip. No landed run used `then_run`, so the volume claim stays unmeasured. |
+| #31 — malformed `then_run` is rejected visibly | `tests/then-run-validation.test.ts`, `tests/then-run.test.ts` | A `[then_run:skipped]` marker with its reason. On the JSON family the serialized schema shows the `pattern`. The Effect serialization shows no keyword for the built-in tools, so the runtime rejection carries the contract. | Inert for well-formed calls. The schema cost is countable (below). The marker appears only when the model sends a malformed `then_run`. |
 | #34 — recall chunk alignment and offset validation | `tests/observation-recall.test.ts` | A chunk starts at a character boundary. An invalid offset fails with a clean message instead of a raw `ERR_OUT_OF_RANGE`. | Inert for volume in normal paging. Boundaries move only for an offset that does not start a character, which previously decoded to replacement characters. |
 | #35 — `then_run` timeout validation | `tests/then-run-validation.test.ts` | A visible rejection of an invalid timeout. On the Effect family the serialized `timeout` also admits the strings `Infinity`, `-Infinity` and `NaN`, which the runtime check rejects. | Inert for valid calls. The schema cost is countable (below). |
 
 ## The countable part: schema bytes
 
-The provider request carries the tool list. The model pays every byte of the
-`then_run` description on every round-trip.
+The plugin extends a built-in mutation schema only when it can. It skips the extension when no
+`shell` tool was captured, and it skips `patch` when the patch paths cannot be enumerated
+([`wrap-tools.ts`](../src/action-fusion/wrap-tools.ts)). When it extends them, every provider
+round-trip carries the added property text.
 
-To measure the cost, extend the tool's own schema with the shipped description and
-compare the serialized byte lengths. Use an empty base for one stable number per tool:
+To measure that cost, extend the tool's own schema with the shipped text and compare the serialized
+byte lengths. Use the base each family really has:
+
+- **JSON schema family:** an empty object schema.
+- **Effect-struct family:** a struct with one string field, the shape a real tool input has.
 
 | Tool | JSON schema family | Effect-struct family |
 |---|---|---|
@@ -65,22 +70,20 @@ compare the serialized byte lengths. Use an empty base for one stable number per
 | `write` | 482 | 536 |
 | `patch` | 516 | 570 |
 
-Both columns extend a tool's own schema with the shipped description and compare serialized byte
-lengths. The JSON column uses an empty object base, because those tools are not the shipped ones.
-The Effect column uses a base with one string field, the shape a real tool input has: it is the cost
-a request pays for one description, about 1.6 KiB for all three tools.
+Each figure is the cost of the whole `then_run` property. It is not the cost of the description text
+alone. The fixed command and timeout sub-schema accounts for 421 bytes of it. The three descriptions
+account for the rest: 113 / 115 / 149 bytes. The per-tool ceiling in the test is 700 bytes for the
+property. That leaves about 279 bytes for the text you write.
 
-Do not read the Effect column off an empty struct base. That recipe reports 38 bytes more per tool
-(572 / 574 / 608), because an empty struct serializes to `{"not":{"type":"null"}}` while the extended
-document carries the full object skeleton. No real request pays that difference for a description.
-The delta is stable across the non-empty bases measured here: one field and three fields both read
-534 / 536 / 570. On the JSON family, a tool that already lists another property measures one byte
-more per description (481 / 483 / 517), so that column keeps the empty-base recipe for one stable
-number per tool.
+For the Effect column, do not use an empty struct base. That is not the shape a real tool input has,
+and the delta moves with the base. The measured delta is stable across the non-empty bases tried
+here — one field and three fields both read 534 / 536 / 570. On the JSON family, a tool that already
+lists another property measures one byte more (481 / 483 / 517).
 
 `tests/schema-cost.test.ts` reads the shipped descriptions and pins both columns, plus a 700-byte
-ceiling for one description. One assertion reads this table and compares it with those numbers. A
-wording or keyword change that moves a byte fails the suite until the table moves with it.
+ceiling for one property. One assertion reads this table and compares it with those numbers. A
+wording or keyword change that moves a byte fails the suite until the table moves with it. That
+includes a change to an Effect-only annotation that a schema-side copy would miss.
 
 The 10 KiB figure in the pack gate is the archive threshold that decides whether one
 tool **result** becomes a stored observation (`THRESHOLD_BYTES`). The schema text above
