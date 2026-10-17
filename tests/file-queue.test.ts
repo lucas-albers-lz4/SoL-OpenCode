@@ -480,15 +480,40 @@ describe("symlink queue keys", () => {
 
     expect(dotted).toContain(`blink${sep}..${sep}`);
 
-    // Measure before creating anything: an existing file would also be caught by its inode key,
-    // which would hide a wrong path key.
+    // One queue with the file the kernel writes. On main's helper this measures 2.
     expect(await peakConcurrency([dotted, kernelName])).toBe(1);
-    expect(await peakConcurrency([dotted, spelledName])).toBe(2);
+    // Also one queue with the lexical collapse, because the queue keys both spellings: a
+    // dotted name serializes more, never less.
+    expect(await peakConcurrency([dotted, spelledName])).toBe(1);
+    // Two unrelated names stay apart, so the peak of 1 above is a shared queue and not a
+    // regime that cannot reach 2.
+    expect(await peakConcurrency([kernelName, spelledName])).toBe(2);
 
     // The kernel agrees with `kernelName`: writing through the dotted name lands there.
     await writeFile(dotted, "x\n", "utf8");
     expect((await stat(kernelName)).size).toBe(2);
     await expect(stat(spelledName)).rejects.toThrow();
+  });
+
+  it("keeps a relative dotted name's spelling against the working directory", async () => {
+    // The relative branch builds `<cwd>/<name>`. A version that drops `process.cwd()` names a
+    // path at the filesystem root, so this is the case that catches it.
+    const outside = await mkdtemp(join(tmpdir(), "fused-queue-dotted-rel-"));
+    const nested = join(outside, "a", "b");
+    await mkdir(nested, { recursive: true });
+    const work = await mkdtemp(join(tmpdir(), "fused-queue-dotted-rel-work-"));
+    await symlink(nested, join(work, "blink"));
+    const kernelName = join(outside, "a", "target.txt");
+    const cwd = process.cwd();
+
+    try {
+      process.chdir(work);
+      const relativeDotted = `blink${sep}..${sep}target.txt`;
+
+      expect(await peakConcurrency([relativeDotted, kernelName])).toBe(1);
+    } finally {
+      process.chdir(cwd);
+    }
   });
 });
 describe("resolveMutationPath", () => {
