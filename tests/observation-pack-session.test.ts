@@ -195,6 +195,9 @@ describe("session-index lock lifecycle", () => {
       order.push("second");
     });
     await first;
+    // Let the predecessor's cleanup callback run before the third call reads the map, so a
+    // cleanup that ignores tail identity is caught here rather than by timing.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const third = withSessionIndexLock("sess-order", async () => {
       order.push("third");
     });
