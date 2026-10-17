@@ -26,3 +26,8 @@ export function withSessionIndexLock<T>(sessionID: string, work: () => Promise<T
 export function resetSessionIndexLocksForTests(): void {
   sessionChains.clear();
 }
+
+/** @internal Vitest only — observes that a settled chain released its entry. */
+export function sessionIndexLockCountForTests(): number {
+  return sessionChains.size;
+}
