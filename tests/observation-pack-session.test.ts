@@ -6,7 +6,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { StorageDomain, ToolContext, ToolEditor } from "../src/deps/opencode-plugin-types.js";
 import type { Info } from "../src/deps/opencode-plugin-types.js";
 import { registerObservationPack } from "../src/observation-pack/index.js";
@@ -19,6 +19,7 @@ import {
 } from "../src/observation-pack/session-index.js";
 import {
   resetSessionIndexLocksForTests,
+  sessionIndexLockCountForTests,
   withSessionIndexLock,
 } from "../src/observation-pack/session-index-mutex.js";
 
@@ -122,6 +123,83 @@ describe("observation pack session index", () => {
     const final = await loadSessionIndex(storage, sessionID);
     expect(final).toHaveLength(2);
     expect(final.map((entry) => entry.toolCallId).sort()).toEqual(["tool-a", "tool-b"]);
+  });
+});
+
+describe("session-index lock lifecycle", () => {
+  afterEach(() => {
+    resetSessionIndexLocksForTests();
+  });
+
+  it("releases the entry once the work settles", async () => {
+    resetSessionIndexLocksForTests();
+    await withSessionIndexLock("sess-release", async () => 1);
+    await vi.waitFor(() => expect(sessionIndexLockCountForTests()).toBe(0));
+  });
+
+  it("releases the entry when the work rejects", async () => {
+    resetSessionIndexLocksForTests();
+    await expect(
+      withSessionIndexLock("sess-reject", async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    await vi.waitFor(() => expect(sessionIndexLockCountForTests()).toBe(0));
+  });
+
+  it("keeps a queued successor's entry while that successor still runs", async () => {
+    resetSessionIndexLocksForTests();
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let releaseSecond!: () => void;
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    let secondStarted = false;
+
+    const first = withSessionIndexLock("sess-owner", async () => {
+      await firstGate;
+    });
+    const second = withSessionIndexLock("sess-owner", async () => {
+      secondStarted = true;
+      await secondGate;
+    });
+
+    releaseFirst();
+    await first;
+    await vi.waitFor(() => expect(secondStarted).toBe(true));
+    // The predecessor's cleanup must not remove the successor's entry: only the current
+    // owner may delete, so this reads 1, not 0.
+    expect(sessionIndexLockCountForTests()).toBe(1);
+
+    releaseSecond();
+    await second;
+    await vi.waitFor(() => expect(sessionIndexLockCountForTests()).toBe(0));
+  });
+
+  it("runs a third call only after the second settles", async () => {
+    resetSessionIndexLocksForTests();
+    const order: string[] = [];
+
+    const first = withSessionIndexLock("sess-order", async () => {
+      order.push("first");
+    });
+    const second = withSessionIndexLock("sess-order", async () => {
+      // A real hold, so an unqueued third call would run and finish first.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      order.push("second");
+    });
+    await first;
+    // Let the predecessor's cleanup callback run before the third call reads the map.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const third = withSessionIndexLock("sess-order", async () => {
+      order.push("third");
+    });
+
+    await Promise.all([second, third]);
+    expect(order).toEqual(["first", "second", "third"]);
   });
 });
 
