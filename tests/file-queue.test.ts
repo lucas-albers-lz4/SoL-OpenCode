@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { mkdir, link, mkdtemp, realpath, rename, symlink, writeFile } from "node:fs/promises";
+import { mkdir, link, mkdtemp, realpath, rename, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   resolveMutationPath,
@@ -461,6 +461,34 @@ describe("symlink queue keys", () => {
     await symlink(secondTarget, secondLink);
 
     expect(await peakConcurrency([firstLink, secondLink])).toBe(2);
+  });
+
+  it("keys the file the kernel writes when `..` follows a symlinked component", async () => {
+    // The input name itself may carry `..`. `path.resolve` collapses it against the *spelled*
+    // directory, but the kernel applies it to the directory the earlier component really is, so a
+    // symlinked component makes those two files different (issue #65). The spelling must stay
+    // literal here: `path.join` would collapse `..` before the queue ever sees it.
+    const outside = await mkdtemp(join(tmpdir(), "fused-queue-dotted-"));
+    const nested = join(outside, "a", "b");
+    await mkdir(nested, { recursive: true });
+    const work = await mkdtemp(join(tmpdir(), "fused-queue-dotted-work-"));
+    const blink = join(work, "blink");
+    await symlink(nested, blink);
+    const dotted = `${blink}${sep}..${sep}target.txt`;
+    const kernelName = join(outside, "a", "target.txt");
+    const spelledName = join(work, "target.txt");
+
+    expect(dotted).toContain(`blink${sep}..${sep}`);
+
+    // Measure before creating anything: an existing file would also be caught by its inode key,
+    // which would hide a wrong path key.
+    expect(await peakConcurrency([dotted, kernelName])).toBe(1);
+    expect(await peakConcurrency([dotted, spelledName])).toBe(2);
+
+    // The kernel agrees with `kernelName`: writing through the dotted name lands there.
+    await writeFile(dotted, "x\n", "utf8");
+    expect((await stat(kernelName)).size).toBe(2);
+    await expect(stat(spelledName)).rejects.toThrow();
   });
 });
 describe("resolveMutationPath", () => {
