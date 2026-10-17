@@ -196,15 +196,19 @@ async function linkChain(resolvedPath: string): Promise<string[]> {
  * These keys are opaque queue names, not paths: nothing may canonicalize them a second time.
  */
 async function queueKeysFor(filePath: string): Promise<string[]> {
-  const resolvedPath = resolve(filePath);
+  // Keep `..` in the spelling until the filesystem resolves it. `path.resolve` is only
+  // lexical: when an earlier component is a symlink, the kernel applies `..` to the
+  // symlink target's directory instead. Collapsing it here can therefore give two names
+  // for the same file disjoint queue keys.
+  const absolutePath = isAbsolute(filePath) ? filePath : `${process.cwd()}${sep}${filePath}`;
   const pathKeys = new Set<string>();
-  for (const name of await linkChain(resolvedPath)) {
+  for (const name of await linkChain(absolutePath)) {
     pathKeys.add(await pathQueueKey(name));
   }
 
   let stats: { dev: number; ino: number };
   try {
-    stats = await stat(resolvedPath);
+    stats = await stat(absolutePath);
   } catch (error) {
     if (!isUnresolvablePathError(error)) throw error;
     return [...pathKeys];
