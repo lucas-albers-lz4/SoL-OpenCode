@@ -182,27 +182,22 @@ describe("session-index lock lifecycle", () => {
   it("runs a third call only after the second settles", async () => {
     resetSessionIndexLocksForTests();
     const order: string[] = [];
-    let releaseSecond!: () => void;
-    const secondGate = new Promise<void>((resolve) => {
-      releaseSecond = resolve;
-    });
 
     const first = withSessionIndexLock("sess-order", async () => {
       order.push("first");
     });
     const second = withSessionIndexLock("sess-order", async () => {
-      await secondGate;
+      // A real hold, so an unqueued third call would run and finish first.
+      await new Promise((resolve) => setTimeout(resolve, 20));
       order.push("second");
     });
     await first;
-    // Let the predecessor's cleanup callback run before the third call reads the map, so a
-    // cleanup that ignores tail identity is caught here rather than by timing.
+    // Let the predecessor's cleanup callback run before the third call reads the map.
     await new Promise((resolve) => setTimeout(resolve, 0));
     const third = withSessionIndexLock("sess-order", async () => {
       order.push("third");
     });
 
-    releaseSecond();
     await Promise.all([second, third]);
     expect(order).toEqual(["first", "second", "third"]);
   });
