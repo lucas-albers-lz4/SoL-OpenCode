@@ -190,10 +190,10 @@ async function linkChain(resolvedPath: string): Promise<string[]> {
  * A path that is a symlink contributes a key for the link name and for the resolved target
  * name, so a fused section on either name excludes the other.
  *
- * A name that carries `..` contributes keys for both spellings: the one the caller wrote, which
- * the kernel resolves, and the lexical resolution the host applies before it writes
- * (`FSUtil.resolve`). Keying both cannot drop a key an earlier revision held; it costs extra
- * serialization only for a name that carries `..`.
+ * A name whose spelled path differs from Node `resolve(filePath)` (`path.resolve`) contributes
+ * keys for both spellings: the one the caller wrote, which the kernel resolves, and the lexical
+ * resolution. Keying both cannot drop a key an earlier revision held; it costs extra
+ * serialization whenever `absolutePath !== lexicalPath` (also `./` and slash differences).
  *
  * Keys are derived when an operation is enqueued, so an alias that appears while a section is
  * already running contributes no inode key and is not covered by it.
@@ -206,8 +206,9 @@ async function queueKeysFor(filePath: string): Promise<string[]> {
   // symlink target's directory instead. Collapsing it here can therefore give two names
   // for the same file disjoint queue keys. The lexical resolution stays in the key set
   // beside the kept spelling, because that is the name the host resolves an input to before
-  // it writes; neither spelling's exclusion is traded for the other's. The two coincide for
-  // an ordinary name, so the second walk happens only when the spelling carries `..`.
+  // it writes; neither spelling's exclusion is traded for the other's. The two coincide
+  // when `absolutePath === lexicalPath`; the second walk happens whenever they differ
+  // (also `./` and slash differences).
   const absolutePath = isAbsolute(filePath) ? filePath : `${process.cwd()}${sep}${filePath}`;
   const lexicalPath = resolve(filePath);
   const spellings = absolutePath === lexicalPath ? [absolutePath] : [absolutePath, lexicalPath];
