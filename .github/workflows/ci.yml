@@ -29,6 +29,7 @@ jobs:
         # package-manager-cache input (same choice as publish.yml).
       - run: npm ci
       - run: npm test
+      - run: python3 -m unittest discover -s benchmarks -p 'test_*.py'
       - run: npm run typecheck
       - run: npm run build
       # `npm pack` fires the `prepack` hook, so this step is what actually proves

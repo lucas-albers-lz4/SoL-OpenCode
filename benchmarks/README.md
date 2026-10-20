@@ -19,6 +19,12 @@ published only when they come from this pipeline, never from anecdotes).
   output: output is agent verbosity, and it is reported separately
   (`output_tokens`) so it cannot move a projection-controlled headline metric.
 
+OpenCode 2.0.27 accepts the task as the positional message to `opencode run`;
+`--repo` is an option to this harness, not a CLI positional argument. The runner
+sets both the child process working directory and `PWD` to the target repo so
+relative reads and writes use the fixture. `benchmarks/test_ab_run.py` pins this
+contract.
+
 ## Method rules that make results citable
 
 1. **Same model, same prompt bytes, same repo state** across arms. Compare an
@@ -75,3 +81,25 @@ python3 benchmarks/ab-run.py --repo /path/to/target \
 # then, with each run's isolated store visible:
 python3 benchmarks/measure.py ./ab-DATE/runs --xdg-dir ./ab-DATE/xdg
 ```
+
+## Reproducing issue #27 residual probes
+
+`probes/prepare-issue-27-fixtures.py` creates fresh Action-Fusion and Observation Pack fixtures. The paired Action-Fusion arms use the same task prompt; the recall prompt contains no expected sentinel value. These model-backed runs are not part of CI and require a usable provider lane.
+
+```bash
+OUT="$HOME/.cache/sol-opencode-issue-27"
+python3 benchmarks/probes/prepare-issue-27-fixtures.py --out "$OUT"
+for rep in 1 2; do
+  python3 benchmarks/ab-run.py --repo "$OUT/fixtures/fusion-off-$rep" \
+    --prompt-file benchmarks/probes/issue-27-action-fusion.md \
+    --model opencode-zen/nemotron-3.5-lightning-free --arms off --out "$OUT/fusion-off-$rep"
+  python3 benchmarks/ab-run.py --repo "$OUT/fixtures/fusion-neu-$rep" \
+    --prompt-file benchmarks/probes/issue-27-action-fusion.md \
+    --model opencode-zen/nemotron-3.5-lightning-free --arms neu --out "$OUT/fusion-neu-$rep"
+  python3 benchmarks/ab-run.py --repo "$OUT/fixtures/recall-neu-$rep" \
+    --prompt-file benchmarks/probes/issue-27-forced-recall.md \
+    --model opencode-zen/nemotron-3.5-lightning-free --arms neu --out "$OUT/recall-neu-$rep"
+done
+```
+
+Check each `SENTINEL_OUT.txt` against the fixture line outside the model prompt. Read the NDJSON trace to confirm the placeholder ID, a completed `obs_recall`, and its returned `TARGET_SENTINEL=` line. The README records the 2026-10-20 results and run-to-run variance; the raw captures are not committed.

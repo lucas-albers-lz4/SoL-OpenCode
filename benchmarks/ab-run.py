@@ -24,8 +24,9 @@ code are recorded per run; analyze with:
   python3 benchmarks/measure.py ./ab-DATE/runs
 
 Notes / gotchas learned the hard way:
-  * OpenCode 2 takes the work dir as a POSITIONAL arg right after `run`, and
-    model variants as `--model provider/model#variant`.
+  * OpenCode 2.0.27 `run` takes the task as its positional message; `--repo` is
+    a harness option. Set the child process cwd and PWD to the target repo.
+  * Model variants as `--model provider/model#variant`.
   * `opencode run` may exit nonzero after a COMPLETE JSON stream (teardown
     noise). Trust the NDJSON, not the exit code.
   * The host rewrites/extends the config file you point at; the harness always
@@ -80,6 +81,7 @@ def main():
     ap.add_argument("--out", default="./ab-out")
     ap.add_argument("--timeout", type=int, default=1300)
     args = ap.parse_args()
+    target_repo = str(pathlib.Path(args.repo).resolve())
 
     out = pathlib.Path(args.out).resolve()
     runs = out / "runs"
@@ -98,6 +100,7 @@ def main():
         env = dict(os.environ)
         env["XDG_CONFIG_HOME"] = str(cfg_home)
         env["XDG_DATA_HOME"] = str(data_home)
+        env["PWD"] = target_repo
         t0 = time.time()
         ndjson = runs / f"{arm.strip()}.ndjson"
         # A run that exceeds --timeout is recorded and skipped, not fatal: the remaining arms
@@ -106,10 +109,10 @@ def main():
         with open(ndjson, "wb") as f, open(runs / f"{arm.strip()}.err", "wb") as err:
             try:
                 rc = subprocess.call(
-                    ["opencode", "run", args.repo, prompt, "-m", args.model,
+                    ["opencode", "run", prompt, "-m", args.model,
                      "--format", "json", "--standalone", "--print-logs", "--auto",
                      "--title", f"ab-{arm.strip()}-{int(t0)}"],
-                    env=env, stdout=f, stderr=err,
+                    cwd=target_repo, env=env, stdout=f, stderr=err,
                     timeout=args.timeout)
             except subprocess.TimeoutExpired:
                 rc = f"timeout>{args.timeout}s"
