@@ -190,28 +190,53 @@ async function linkChain(resolvedPath: string): Promise<string[]> {
  * A path that is a symlink contributes a key for the link name and for the resolved target
  * name, so a fused section on either name excludes the other.
  *
+ * A name whose spelled path differs from Node `resolve(filePath)` (`path.resolve`) contributes
+ * keys for both spellings: the one the caller wrote, which the kernel resolves, and the lexical
+ * resolution. Keying both cannot drop a key an earlier revision held; it costs extra
+ * serialization whenever `absolutePath !== lexicalPath` (also `./` and slash differences).
+ *
  * Keys are derived when an operation is enqueued, so an alias that appears while a section is
  * already running contributes no inode key and is not covered by it.
  *
  * These keys are opaque queue names, not paths: nothing may canonicalize them a second time.
  */
 async function queueKeysFor(filePath: string): Promise<string[]> {
-  const resolvedPath = resolve(filePath);
+  // Keep `..` in the spelling until the filesystem resolves it. `path.resolve` is only
+  // lexical: when an earlier component is a symlink, the kernel applies `..` to the
+  // symlink target's directory instead. Collapsing it here can therefore give two names
+  // for the same file disjoint queue keys. The lexical resolution stays in the key set
+  // beside the kept spelling, because that is the name the host resolves an input to before
+  // it writes; neither spelling's exclusion is traded for the other's. The two coincide
+  // when `absolutePath === lexicalPath`; the second walk happens whenever they differ
+  // (also `./` and slash differences).
+  const absolutePath = isAbsolute(filePath) ? filePath : `${process.cwd()}${sep}${filePath}`;
+  const lexicalPath = resolve(filePath);
+  const spellings = absolutePath === lexicalPath ? [absolutePath] : [absolutePath, lexicalPath];
+
   const pathKeys = new Set<string>();
-  for (const name of await linkChain(resolvedPath)) {
-    pathKeys.add(await pathQueueKey(name));
+  for (const spelling of spellings) {
+    for (const name of await linkChain(spelling)) {
+      pathKeys.add(await pathQueueKey(name));
+    }
   }
 
-  let stats: { dev: number; ino: number };
-  try {
-    stats = await stat(resolvedPath);
-  } catch (error) {
-    if (!isUnresolvablePathError(error)) throw error;
-    return [...pathKeys];
+  for (const spelling of spellings) {
+    let stats: { dev: number; ino: number };
+    try {
+      stats = await stat(spelling);
+    } catch (error) {
+      if (!isUnresolvablePathError(error)) throw error;
+      // A spelling the kernel cannot open contributes its path key only: a `..` whose
+      // traversal the kernel blocks (`ELOOP`), a leaf that is a directory, or a name that
+      // does not exist yet. The other spelling still supplies the inode key when it can.
+      continue;
+    }
+
+    const inodeKey = inodeQueueKey(stats);
+    if (inodeKey !== undefined) pathKeys.add(inodeKey);
   }
 
-  const inodeKey = inodeQueueKey(stats);
-  return inodeKey === undefined ? [...pathKeys] : [...pathKeys, inodeKey];
+  return [...pathKeys];
 }
 
 async function withQueueKey<T>(key: string, work: () => Promise<T>): Promise<T> {
