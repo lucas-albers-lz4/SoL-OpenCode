@@ -48,7 +48,7 @@ npm i sol-opencode
 ```jsonc
 {
   "plugins": [
-    { "package": "sol-opencode@0.1.1", "options": { "actionFusion": true, "observationPack": true } }
+    { "package": "sol-opencode@0.1.2", "options": { "actionFusion": true, "observationPack": true } }
   ]
 }
 ```
