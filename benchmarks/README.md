@@ -84,7 +84,9 @@ python3 benchmarks/measure.py ./ab-DATE/runs --xdg-dir ./ab-DATE/xdg
 
 ## Reproducing issue #27 residual probes
 
-`probes/prepare-issue-27-fixtures.py` creates fresh Action-Fusion and Observation Pack fixtures. The paired Action-Fusion arms use the same task prompt; the recall prompt contains no expected sentinel value. These model-backed runs are not part of CI and require a usable provider lane.
+The fixture generator creates six task fixtures. It removes a stale `SENTINEL_OUT.txt` from each recall fixture. The probe files use fixed prompts. The recall prompt does not contain the expected sentinel.
+
+These runs require a working provider lane. CI does not run model-backed probes.
 
 ```bash
 OUT="$HOME/.cache/sol-opencode-issue-27"
@@ -102,4 +104,4 @@ for rep in 1 2; do
 done
 ```
 
-Check each `SENTINEL_OUT.txt` against the fixture line outside the model prompt. Read the NDJSON trace to confirm the placeholder ID, a completed `obs_recall`, and its returned `TARGET_SENTINEL=` line. The README records the 2026-10-20 results and run-to-run variance; the raw captures are not committed.
+Compare each `SENTINEL_OUT.txt` with the fixture line outside the model prompt. Read the NDJSON trace to find the placeholder ID. Make sure that one `obs_recall` call completed and returned the `TARGET_SENTINEL=` line. The top-level README records the 2026-10-20 results. The repository does not include the raw captures.
