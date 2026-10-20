@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,7 +11,10 @@ import type { StorageDomain, ToolContext, ToolEditor } from "../src/deps/opencod
 import type { Info } from "../src/deps/opencode-plugin-types.js";
 import { registerObservationPack } from "../src/observation-pack/index.js";
 import { createObservation, ensureStored } from "../src/observation-pack/observation.js";
-import { observationPackObjectsRoot } from "../src/observation-pack/runtime-path.js";
+import {
+  observationObjectPath,
+  observationPackObjectsRoot,
+} from "../src/observation-pack/runtime-path.js";
 import {
   loadSessionIndex,
   saveSessionIndex,
@@ -289,5 +292,82 @@ describe("obs_recall session isolation", () => {
       const result = await execute({ id }, fakeToolContext("session-a"));
       expect(result.content).toContain(id);
     });
+  });
+});
+
+async function createRetainedObservation(sessionID: string) {
+  await recallDataHome();
+
+  const storage = memoryStorage();
+  const text = `ARCHIVE-RETENTION:${"R".repeat(11_000)}`;
+  let executeAfter: ((event: unknown) => Promise<void> | void) | undefined;
+  const tool = {
+    hook: async (name: string, callback: (event: unknown) => Promise<void> | void) => {
+      if (name === "execute.after") executeAfter = callback;
+      return { dispose: async () => {} };
+    },
+    transform: async (fn: (editor: ToolEditor) => void) => {
+      const editor = {
+        add: () => {},
+        list: () => [],
+        get: () => undefined,
+        namespace: () => {},
+        update: () => {},
+        remove: () => {},
+      };
+      fn(editor as ToolEditor);
+      return { dispose: async () => {} };
+    },
+  };
+  const session = {
+    hook: async () => ({ dispose: async () => {} }),
+  };
+  const plugin = await registerObservationPack(
+    { tool, session, storage } as Parameters<typeof registerObservationPack>[0],
+  );
+  if (executeAfter === undefined) throw new Error("execute.after hook was not registered");
+
+  await executeAfter({
+    tool: "bash",
+    status: "completed",
+    id: `call-${sessionID}`,
+    result: { content: text },
+    sessionID,
+    agent: "agent-1",
+    messageID: "msg-1",
+    input: {},
+  });
+
+  const [entry] = await loadSessionIndex(storage, sessionID);
+  if (entry === undefined) throw new Error("archived observation was not indexed");
+  const objectPath = observationObjectPath(await observationPackObjectsRoot(), entry.obsId);
+  return { storage, sessionID, plugin, entry, objectPath, text };
+}
+
+describe("archive object retention", () => {
+  afterEach(() => {
+    resetSessionIndexLocksForTests();
+  });
+
+  it("keeps archived objects after plugin disposal and allows recall", async () => {
+    const { storage, sessionID, plugin, entry, objectPath, text } =
+      await createRetainedObservation("session-retained-after-disposal");
+
+    await plugin.dispose();
+    expect(await readFile(objectPath, "utf8")).toBe(text);
+
+    const execute = await captureObsRecallExecute(storage);
+    const recalled = await execute({ id: entry.obsId }, fakeToolContext(sessionID));
+    expect(recalled.content).toContain("ARCHIVE-RETENTION:");
+  });
+
+  it("keeps archived objects after their session index is cleared", async () => {
+    const { storage, sessionID, plugin, objectPath, text } =
+      await createRetainedObservation("session-retained-orphan");
+
+    await plugin.dispose();
+    await saveSessionIndex(storage, sessionID, []);
+    expect(await loadSessionIndex(storage, sessionID)).toEqual([]);
+    expect(await readFile(objectPath, "utf8")).toBe(text);
   });
 });
