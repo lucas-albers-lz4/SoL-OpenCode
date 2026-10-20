@@ -86,6 +86,17 @@ Option handling is defensive. A value that is not `true`/`false` logs a warning 
 mechanism only; an unrecognised key (a typo such as `actionfusion`) warns and leaves the other
 mechanism enabled; a non-object `options` value disables both. None of those cases throw.
 
+### Archive retention
+
+Observation Pack writes archived tool results beneath `<data-home>/sol-opencode/observation-pack/objects/`.
+An absolute `XDG_DATA_HOME` selects the data home when configured; otherwise the plugin uses the
+platform default (`~/.local/share` on Linux, `~/Library/Application Support` on macOS, or
+`%LOCALAPPDATA%` on Windows). Archive objects are kept indefinitely: the plugin does not expire or
+garbage-collect them when a session ends, the session index changes, the plugin is disposed, or
+OpenCode restarts. This includes objects that become orphaned from their session index. There is no
+automatic size limit or built-in purge command, so archive storage can grow over time. Removing an
+object file makes its archived text unavailable to `obs_recall`.
+
 `setup` throws only when **no** mechanism could register at all. A mechanism whose host domain is
 missing (`ctx.tool`, `ctx.session`, `ctx.storage`, an absolute `ctx.location.directory`) warns and is
 skipped, and the other mechanism stays active. Disposal attempts every registration in reverse
