@@ -51,6 +51,24 @@ Before #58, the default branch kept a dangling symlink on its own path key (`src
 said so), and a cyclic link made the queue throw. Both landed in #58, so a link and its missing target
 now share a queue and an unresolvable name falls back to its name key.
 
+### Upstream fixes this port carries
+
+The port follows upstream where the defect is reachable in this host. The rows below name the
+upstream change, including changes that are still open there.
+
+| Fix | Upstream | This port | Status |
+|---|---|---|---|
+| A signal-killed fused command reported as success (#111 class) | #100, #111 (merged) | `mapShellResultToObservation` treats a string `metadata.signal` as a failure, so a kill cannot carry `[then_run:succeeded]` | merged |
+| A single-line payload got two empty placeholder excerpts | #31 (open; #116 is a duplicate shape) | `placeholderExcerpt` falls back to a byte-bounded excerpt and labels it `[no complete line fits; …]` | merged |
+| Excerpting and line counting split or iterated the whole payload | #33 (open) | `completeLineExcerpt` walks line breaks from the chosen end; `countLines` uses an indexed UTF-16 scan | merged |
+| A failed write left a truncated content-addressed object | #97 (open; publication half only) | `ensureStored` writes a temporary file, fsyncs, and publishes with `link`; a read checks the stored size against its index row | merged |
+| Object access trusted the pathname after the open | #57 (open) | `verifyOpenedObject` compares `dev`/`ino` with `lstat`, and `O_NOFOLLOW` is named with a `0` fallback where the platform lacks it | merged |
+| A denied `obs_recall` still produced placeholders that named it | #72 (open) | the `context` hook records the offered tool names; projection skips a session whose tool set omits `obs_recall` | merged |
+
+Not carried: #14 (a literal-search feature, not a defect), #50 (a bundle whose Windows half #57
+supersedes), #69 and #13 (the Pi ledger and branch counters this port does not have), #81 and #29
+(Pi session directories; this port's storage root is not session-derived).
+
 ### One claim retracted, not a defect fixed
 
 The recall page does not advance when no character fits the window (#55). Upstream returns the same
@@ -79,6 +97,8 @@ in this port's comment was the defect.
 | The #30 volume claim | A measured arm: `benchmarks/` off and on, median and spread. Treat it as unmeasured until it lands. `docs/quality-guard.md` records that, and that page is on the default branch (#57). |
 | The quality guard page and its cost pin (#44) | `docs/quality-guard.md` and `tests/schema-cost.test.ts`: the recorded statements, and the pinned schema cost. No upstream counterpart. Merged (#57). |
 | Whether a payload carrying a Pi evidence receipt should be packed | This port packs it on size alone; upstream refuses (`containsReducerReceipt`). Decide, or record why the port keeps packing it. |
+| Recall from a forked session | A fork gets a new session ID and no index rows, so `obs_recall` refuses an inherited id even though the global object store still holds the bytes. A fix needs a deliberate registry (id → content hash, verified on read), not removal of the session check; `tests/observation-pack-session.test.ts` pins today's rejection as correct. |
+| Per-request object reads | Projection reads every archived object in full on every provider request to match and replace it. The rendered placeholder is now cached, but the text read is not: a session with N packed results re-reads N objects per request. |
 | `~` expansion in the queue | Establish whether the host's mutation tools resolve a spelled `~/x` through the file-access resolver. If they do, key the resolved name; if not, record why the spelled name is the right key. |
 
 ## Aligned against the host, not against upstream

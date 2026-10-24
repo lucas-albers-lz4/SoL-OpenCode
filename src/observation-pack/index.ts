@@ -83,6 +83,52 @@ export async function registerObservationPack(
 
   const disposers: Array<{ dispose: () => Promise<void> }> = [];
 
+  // A placeholder is a pure function of an immutable, content-addressed object.
+  // Rebuilding it on every provider request re-reads and re-counts the whole
+  // object, so keep the rendered text and drop the oldest entry at the cap.
+  const placeholderCache = new Map<string, string>();
+  const PLACEHOLDER_CACHE_LIMIT = 256;
+
+  const placeholderForEntry = (
+    entry: PackedToolResult,
+    text: string,
+    objectPath: string,
+  ): string => {
+    const cached = placeholderCache.get(entry.obsId);
+    if (cached !== undefined) return cached;
+    const placeholder = placeholderFor({
+      id: entry.obsId,
+      contentHash: entry.contentHash,
+      filePath: objectPath,
+      toolName: entry.toolName,
+      toolCallId: entry.toolCallId,
+      text,
+      bytes: entry.bytes,
+      lines: countLines(text),
+      tokens: estimateTokens(text),
+    });
+    if (placeholderCache.size >= PLACEHOLDER_CACHE_LIMIT) {
+      const oldest = placeholderCache.keys().next().value;
+      if (oldest !== undefined) placeholderCache.delete(oldest);
+    }
+    placeholderCache.set(entry.obsId, placeholder);
+    return placeholder;
+  };
+
+  // Tool availability is decided per request, and `SessionHttpRequest` does not
+  // carry it. Record the set from the context hook so a denied `obs_recall` does
+  // not leave placeholders pointing at a tool the model cannot call.
+  const availableTools = new Map<string, ReadonlySet<string>>();
+  const AVAILABLE_TOOLS_LIMIT = 256;
+
+  const recordAvailableTools = (sessionID: string, tools: ReadonlySet<string>): void => {
+    if (availableTools.size >= AVAILABLE_TOOLS_LIMIT && !availableTools.has(sessionID)) {
+      const oldest = availableTools.keys().next().value;
+      if (oldest !== undefined) availableTools.delete(oldest);
+    }
+    availableTools.set(sessionID, tools);
+  };
+
   /**
    * Register one part of the mechanism. A mechanism that fails half way through is work
    * the host can never clean up — it never received a disposer for what already took
@@ -150,8 +196,17 @@ export async function registerObservationPack(
   );
 
   await addRegistration(
+    () => ctx.session.hook("context", async (event) => {
+      recordAvailableTools(event.sessionID, new Set(Object.keys(event.tools)));
+    }),
+  );
+
+  await addRegistration(
     () => ctx.session.hook("http.request", async (event) => {
       try {
+        const tools = availableTools.get(event.sessionID);
+        if (tools !== undefined && !tools.has(OBS_RECALL_TOOL)) return;
+
         await withSessionIndexLock(event.sessionID, async () => {
           const entries = await loadSessionIndex(ctx.storage, event.sessionID);
           if (entries.length === 0) return;
@@ -167,26 +222,16 @@ export async function registerObservationPack(
           for (const entry of entries) {
             const objectPath = observationObjectPath(root, entry.obsId);
             try {
-              const text = await readStoredObservation(objectPath);
+              const text = await readStoredObservation(objectPath, entry.bytes);
               liveEntries.push(entry);
               projectionEntries.push({
                 text,
-                placeholder: placeholderFor({
-                  id: entry.obsId,
-                  contentHash: entry.contentHash,
-                  filePath: objectPath,
-                  toolName: entry.toolName,
-                  toolCallId: entry.toolCallId,
-                  text,
-                  bytes: entry.bytes,
-                  lines: countLines(text),
-                  tokens: estimateTokens(text),
-                }),
+                placeholder: placeholderForEntry(entry, text, objectPath),
                 httpSendCount: entry.httpSendCount,
                 toolCallId: entry.toolCallId,
               });
             } catch {
-              // Fork without copied artifacts: fail open for this entry.
+              // Fork without copied artifacts, or a damaged object: fail open for this entry.
             }
           }
           if (liveEntries.length === 0) return;

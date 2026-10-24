@@ -147,11 +147,12 @@ describe("plugin setup with the real mechanisms", () => {
     await dispose();
 
     const disposals = disposalsOf(host.events);
-    expect(disposals).toHaveLength(4);
+    expect(disposals).toHaveLength(5);
     expect(disposals[0]).toContain("tool.transform#2");
     expect(disposals[1]).toContain("session.hook");
-    expect(disposals[2]).toContain("tool.hook");
-    expect(disposals[3]).toContain("tool.transform#1");
+    expect(disposals[2]).toContain("session.hook");
+    expect(disposals[3]).toContain("tool.hook");
+    expect(disposals[4]).toContain("tool.transform#1");
   });
 
   it("unwinds a mechanism's partial work and still reports the real cause", async () => {
@@ -179,7 +180,7 @@ describe("plugin setup with the real mechanisms", () => {
     await expect(dispose()).rejects.toThrow(/disposal failed/u);
 
     const disposals = disposalsOf(host.events);
-    expect(disposals).toHaveLength(4);
+    expect(disposals).toHaveLength(5);
     expect(disposals.some((event) => event.includes("tool.transform#1"))).toBe(true);
   });
 });

@@ -35,6 +35,41 @@ describe("executeThenRun", () => {
     expect(thenRunTimeoutMs({ command: "x", timeout: 12 })).toBe(12_000);
   });
 
+  it("reports a signal-killed command as failed, not succeeded", async () => {
+    // A process killed by a signal has no exit code: the host reports `signal`
+    // and leaves `exit` undefined. Defaulting the exit to 0 turned a kill into
+    // a success marker next to the kill message.
+    const shellExecute = vi.fn(async () => ({
+      content: "Killed by SIGTERM",
+      metadata: { signal: "SIGTERM" },
+    })) as ShellExecute;
+
+    const output = await executeThenRun({ command: "sleep 60" }, mockContext, shellExecute);
+    expect(output).toBe("[then_run:failed]\nKilled by SIGTERM");
+  });
+
+  it("keeps the mutation text and failed marker when the command is signal-killed", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "then-run-signal-"));
+    const filePath = join(dir, "target.txt");
+    await writeFile(filePath, "mutated bytes\n", "utf8");
+
+    const result = await executeMutationThenRunSinglePath({
+      cwd: dir,
+      absolutePath: filePath,
+      thenRun: { command: "sleep 60" },
+      context: mockContext,
+      shellExecute: vi.fn(async () => ({
+        content: "Killed by SIGKILL",
+        metadata: { signal: "SIGKILL" },
+      })) as ShellExecute,
+      mutate: async () => ({ content: "mutation-visible-to-model" }),
+    });
+
+    expect(result.content).toContain("mutation-visible-to-model");
+    expect(result.content).toContain("[then_run:failed]");
+    expect(result.content).toContain("Killed by SIGKILL");
+  });
+
   it("THEN_RUN_FAILED includes mutation output when shell.execute throws", async () => {
     const shellExecute = vi.fn(async () => {
       throw new Error("");
