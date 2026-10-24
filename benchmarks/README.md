@@ -18,6 +18,9 @@ published only when they come from this pipeline, never from anecdotes).
   packed-object count. `billed` is input + cache read/write and **excludes**
   output: output is agent verbosity, and it is reported separately
   (`output_tokens`) so it cannot move a projection-controlled headline metric.
+- `placeholder-bench.mjs` — CPU-only micro-benchmark for `countLines` and
+  `placeholderFor` on a 7 MiB payload. It is not an arm pair and makes no
+  context claim; the A/B protocol below is still the only source for those.
 
 OpenCode 2.0.27 accepts the task as the positional message to `opencode run`;
 `--repo` is an option to this harness, not a CLI positional argument. The runner

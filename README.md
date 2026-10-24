@@ -246,7 +246,9 @@ chunk boundary, or a failure path that replaces a silent drop — is in
 
 ## Provenance
 
-Portable algorithms are copied from SoL-Pi (MIT, NVIDIA copyright). Reference commit: `e1a586af0ad8956f42ae5b26bba20e48fbf30e00`.
+Portable algorithms are copied from SoL-Pi (MIT, NVIDIA copyright). Reference commit: `219568034fa54ed121ede80961655e33dfb9d0e3`.
+
+Some fixes follow upstream pull requests that are not merged there yet; the [fork register](./docs/upstream-fork-register.md) names each one.
 
 Where this port does not follow SoL-Pi, and why: [docs/upstream-fork-register.md](./docs/upstream-fork-register.md).
 

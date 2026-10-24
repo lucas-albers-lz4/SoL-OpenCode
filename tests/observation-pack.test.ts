@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { isArchivableCompletedToolResult } from "../src/observation-pack/archive-gate.js";
 import { projectArchivedTextsInHttpBody } from "../src/observation-pack/http-rewrite.js";
 import {
+  countLines,
   createObservation,
   FULL_SENDS,
   placeholderFor,
@@ -226,5 +227,64 @@ describe("projectArchivedTextsInHttpBody", () => {
 
     expect(projected.body).toBe(body);
     expect(projected.httpSendCounts[0]).toBe(1);
+  });
+});
+
+describe("placeholder excerpts", () => {
+  it("excerpts a payload whose only line is longer than the excerpt budget", () => {
+    // One line: minified JSON, `jq -c` output, a curl body. Splitting on
+    // complete lines used to keep nothing, so the placeholder showed two empty
+    // excerpts and the model lost both ends of the payload.
+    const body = `HEAD-MARKER${"-pad".repeat(5_000)}TAIL-MARKER`;
+    const observation = createObservation(body, "bash", "call-one-line", "/tmp/objects")!;
+    const lines = placeholderFor(observation).split("\n");
+
+    expect(lines[9]).toBe("[no complete line fits; first 512 bytes]");
+    expect(lines[10]).toContain("HEAD-MARKER");
+    expect(Buffer.byteLength(lines[10] ?? "", "utf8")).toBe(512);
+    expect(lines[11]).toBe("[middle omitted; no complete line fits; last 512 bytes]");
+    expect(lines[12]).toContain("TAIL-MARKER");
+    expect(Buffer.byteLength(lines[12] ?? "", "utf8")).toBe(512);
+  });
+
+  it("cuts a line-less excerpt on a UTF-8 boundary", () => {
+    const body = "☾".repeat(20_000);
+    const observation = createObservation(body, "bash", "call-clef", "/tmp/objects")!;
+    const lines = placeholderFor(observation).split("\n");
+
+    for (const excerpt of [lines[10] ?? "", lines[12] ?? ""]) {
+      expect(excerpt.length).toBeGreaterThan(0);
+      expect(excerpt).not.toContain("�");
+      expect(Buffer.byteLength(excerpt, "utf8")).toBeLessThanOrEqual(512);
+      expect(excerpt).toBe("☾".repeat(excerpt.length));
+    }
+  });
+
+  it("keeps whole lines and byte-identical output for a multi-line payload", () => {
+    const text = `line-1\nline-2\nline-3\n${"x".repeat(10_240)}\nlast-1\nlast-2\n`;
+    const observation = createObservation(text, "bash", "call-multi", "/tmp/objects")!;
+    const placeholder = placeholderFor(observation);
+
+    const headLabel = "[first complete lines, up to 512 bytes]\n";
+    const tailLabel = "[middle omitted; last complete lines, up to 512 bytes]\n";
+    const headStart = placeholder.indexOf(headLabel) + headLabel.length;
+    const headEnd = placeholder.indexOf(`\n${tailLabel}`);
+    const head = placeholder.slice(headStart, headEnd);
+    const tailStart = placeholder.indexOf(tailLabel) + tailLabel.length;
+    const tailEnd = placeholder.indexOf("\n[", tailStart);
+    const tail = placeholder.slice(tailStart, tailEnd);
+
+    expect(head).toBe("line-1\nline-2\nline-3\n");
+    expect(tail).toBe("last-1\nlast-2\n");
+    expect(placeholder).toContain(`original_lines: ${countLines(text)}`);
+  });
+
+  it("counts astral characters and newlines the same way as a code-point scan", () => {
+    expect(countLines("")).toBe(0);
+    expect(countLines("a")).toBe(1);
+    expect(countLines("a\n")).toBe(1);
+    expect(countLines("a\nb")).toBe(2);
+    expect(countLines("𝄞\n𝄞\n")).toBe(2);
+    expect(countLines("𝄞".repeat(100))).toBe(1);
   });
 });

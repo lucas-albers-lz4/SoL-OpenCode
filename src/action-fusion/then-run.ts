@@ -86,11 +86,15 @@ export async function assertAllUnchangedBeforeCommand(
 
 function mapShellResultToObservation(result: Tool.Result): string {
   const metadata = result.metadata;
+  // A signal kill has no exit code: the host leaves `exit` undefined and reports
+  // `signal` instead, so the default below would turn a killed command into a
+  // success marker. Treat any signal as a failure.
+  const signal = typeof metadata?.signal === "string" ? metadata.signal : undefined;
   const exit = typeof metadata?.exit === "number" ? metadata.exit : 0;
   const timedOut = metadata?.timeout === true;
   const output = resultText(result);
 
-  if (timedOut || exit !== 0) {
+  if (timedOut || signal !== undefined || exit !== 0) {
     return [THEN_RUN_FAILED, output].filter(Boolean).join("\n");
   }
   return output ? `${THEN_RUN_SUCCEEDED}\n${output}` : THEN_RUN_SUCCEEDED;

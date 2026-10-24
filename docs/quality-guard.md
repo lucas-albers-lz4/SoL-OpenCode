@@ -46,6 +46,16 @@ intended behavior. When a fused command moves from "never ran" to "ran", it adds
 round-trips and output. For this class, state the intended behavior change and the
 expected direction until a measurement exists.
 
+## Recorded statements (upstream port, 2026-10-24)
+
+| Fix | Unit assertion | Model-visible surface | Quality statement |
+|---|---|---|---|
+| A signal-killed fused command is a failure | `tests/then-run.test.ts` | The marker is `[then_run:failed]` (17 bytes) instead of `[then_run:succeeded]` (20 bytes); the command output is unchanged. | An intended behavior change: a kill no longer reads as success. Byte delta is -3. The round-trip direction is unmeasured: a model that sees the failure may retry, which is the point of the fix. |
+| A single-line payload gets a placeholder excerpt | `tests/observation-pack.test.ts` | Head and tail excerpts of at most 512 bytes each, with a `[no complete line fits; …]` label. | Adds at most 1024 bytes where the placeholder previously carried two empty excerpts. The replaced payload is at least 10 KiB, so net context still falls. Multi-line output is byte-identical, which the same test pins. |
+| Excerpting and line counting stop walking the whole payload | `tests/observation-pack.test.ts` (`countLines`, multi-line parity) | None; the placeholder text is unchanged. | Inert for volume and round-trips. CPU on 7 MiB: `countLines` 74.7 → 18.1 ms; `placeholderFor` 64.5 → 0.01 ms (multi-line) and 59.3 → 5.0 ms (single line). Rendering 20 entries for 10 requests: 12.6 s → 1.8 ms. Regenerate with [`benchmarks/placeholder-bench.mjs`](../benchmarks/placeholder-bench.mjs). |
+| Objects publish atomically and are size-checked on read | `tests/observation-pack-storage.test.ts` | A missing or damaged object fails open: the original payload stays in the request instead of a truncated placeholder. | Inert in normal operation. On a damaged store the request keeps bytes it already carried; no new model-visible text. |
+| Projection stops when `obs_recall` is not offered | `tests/observation-pack-tool-gate.test.ts` | No placeholder for that session; the full result stays. | Returns volume to the un-packed result for a session whose tool set excludes `obs_recall`. Count it per session from the packed entries; it prevents a pointer to a tool the model cannot call. |
+
 ## Recorded statements (review pass of 2026-10-14)
 
 | Fix | Unit assertion | Model-visible surface | Quality statement |

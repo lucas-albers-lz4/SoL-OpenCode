@@ -3,11 +3,16 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readStoredObservation } from "../src/observation-pack/observation.js";
+import {
+  createObservation,
+  ensureStored,
+  readStoredObservation,
+  THRESHOLD_BYTES,
+} from "../src/observation-pack/observation.js";
 import { observationObjectPath, observationPackObjectsRoot } from "../src/observation-pack/runtime-path.js";
 
 const priorXdgDataHome = process.env.XDG_DATA_HOME;
@@ -81,5 +86,42 @@ describe("private Observation Pack storage", () => {
     await symlink(secretPath, linkedPath);
 
     await expect(readStoredObservation(linkedPath)).rejects.toThrow();
+  });
+
+  it("publishes an object atomically and leaves no temporary file", async () => {
+    const dataHome = await tempRoot();
+    process.env.XDG_DATA_HOME = dataHome;
+    const root = await observationPackObjectsRoot();
+    const text = `${"object-line\n".repeat(2_000)}`;
+    const observation = createObservation(text, "bash", "call-atomic", root)!;
+
+    await ensureStored(observation);
+
+    await expect(readFile(observation.filePath, "utf8")).resolves.toBe(text);
+    const leftovers = (await readdir(root)).filter((name) => name.endsWith(".tmp"));
+    expect(leftovers).toEqual([]);
+  });
+
+  it("removes its temporary file when the object name is already taken by a directory", async () => {
+    const dataHome = await tempRoot();
+    process.env.XDG_DATA_HOME = dataHome;
+    const root = await observationPackObjectsRoot();
+    const text = "x".repeat(THRESHOLD_BYTES + 100);
+    const observation = createObservation(text, "bash", "call-blocked", root)!;
+    await mkdir(observation.filePath);
+
+    await expect(ensureStored(observation)).rejects.toThrow(/not a regular file/);
+    const leftovers = (await readdir(root)).filter((name) => name.endsWith(".tmp"));
+    expect(leftovers).toEqual([]);
+  });
+
+  it("rejects an object whose size no longer matches its index row", async () => {
+    const dataHome = await tempRoot();
+    process.env.XDG_DATA_HOME = dataHome;
+    const root = await observationPackObjectsRoot();
+    const filePath = join(root, "obs_0123456789abcdef01234567.txt");
+    await writeFile(filePath, "truncated");
+
+    await expect(readStoredObservation(filePath, 9_999)).rejects.toThrow(/size mismatch/);
   });
 });
